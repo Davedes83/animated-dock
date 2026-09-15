@@ -199,9 +199,12 @@ cmd_set() {
   local key=$1 value=$2
   [[ $key =~ ^[a-zA-Z][a-zA-Z0-9]*$ ]] || die "usage: omarchy-dock-config set <key> <json-value>"
   [[ $key == "id" || $key == "items" ]] && die "set: '$key' is not a settable key"
-  echo "$value" | jq -e '(. // empty) != null' >/dev/null 2>&1 \
-    || echo "$value" | jq -e 'null == .' >/dev/null 2>&1 \
-    || die "set: not valid JSON: $value"
+  # Valid JSON only. jq -e: 0 truthy, 1 valid-but-falsey (false/null), and
+  # >=2 means a parse/compile error. So rc that high = not JSON output.
+  local rc
+  echo "$value" | jq -e '.' >/dev/null 2>&1
+  rc=$?
+  [[ $rc -ge 2 ]] && die "set: not valid JSON: $value"
   if [[ $(echo "$value" | jq -c .) == "null" ]]; then
     apply "del(.$key)" || exit 1
     echo "unset: $key"
@@ -245,8 +248,8 @@ and the shell hot-reloads the change on save.
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
 magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
-tiles, tileRadius, tileInset, tileOpacity, border, cornerRadius, autohide,
-dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
+tiles, tileRadius, tileInset, tileOpacity, border, cornerRadius,
+cornerShape, autohide, dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
 hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
 tintRunning, monochrome, glyphColor, fullWidth, edgeGap, items.
 

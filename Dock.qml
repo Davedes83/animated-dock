@@ -802,15 +802,54 @@ Item {
 
   // Window extents. Cross: edge strip + card + label band. Main: the card
   // plus slack for a label centred on an end icon to spill into.
+  //
+  // While the settings popup is open, both axes keep the slack they would
+  // need at the slider's largest icon size. The card stays pinned to the
+  // edge/alignment (bottom, centred), so the extras are invisible click-
+  // through strips, but the window itself never re-sizes while a control is
+  // live. That matters: an xdg-popup child of a resizing window is re-
+  // anchored by the compositor over several frames, and the border of the
+  // popup is what shows that churn as a ghost. With the window frozen the
+  // popup map is never disturbed.
+  readonly property int iconSizeMax: 96
+  function windowAxesAt(sv) {
+    var total = 0
+    var list = displayItems
+    var n = list.length
+    for (var i = 0; i < n; i++) {
+      var it = list[i]
+      total += Util.isPlainObject(it) && (it.spacer === true || it.__divider === true) ? ruleWidth : sv
+    }
+    total += Math.max(0, n - 1) * gap
+    var cardMain = Border.left(dockBorder) + pad + total + pad + Border.right(dockBorder)
+    var cardCross = Border.top(dockBorder) + pad + sv + pad + Border.bottom(dockBorder)
+    var zoomOverflow = Math.round(sv * zoom * (0.5 + zoomRaise)) + Style.space(4)
+    var labelBand = !labels ? zoomOverflow
+      : vertical ? Style.space(220) + Style.spacing.sm + zoomOverflow
+                 : labelHeight + Style.spacing.sm + zoomOverflow
+    return {
+      main: Math.round(cardMain + (labels && !vertical ? Style.space(240) : 0)),
+      cross: Math.round(labelBand + cardCross + edgeGap)
+    }
+  }
+  readonly property int reserveMain: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax)).main - windowAxesAt(root.slot).main) : 0
+  readonly property int reserveCross: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax)).cross - windowAxesAt(root.slot).cross) : 0
   readonly property int windowCross: labelBand + cardCross + edgeGap
   readonly property int windowMain: cardMain + (labels && !vertical ? Style.space(240) : 0)
-  readonly property int windowWidth: vertical ? windowCross : windowMain
-  readonly property int windowHeight: vertical ? windowMain : windowCross
+  readonly property int windowWidth: vertical ? windowCross + reserveCross : windowMain + reserveMain
+  readonly property int windowHeight: vertical ? windowMain + reserveMain : windowCross + reserveCross
 
   // Where along the cross axis, in window coordinates, the card's edge
-  // strip and the card itself begin.
-  readonly property int hitCross: edgeFirst ? 0 : labelBand
-  readonly property int cardCrossPos: edgeFirst ? edgeGap : labelBand
+  // strip and the card itself begin. Pillars against the first edge sit at
+  // the top/left as usual; pillars against the last edge are pinned to the
+  // bottom/right of the *window buffer* (their docked edge). The buffer's
+  // cross extent includes whatever is reserved while the settings popup is
+  // open — windowCross alone is the un-reserved figure and would leave the
+  // card floating panel-height above the docked edge until the popup closes.
+  readonly property int crossAxisLen: vertical ? windowWidth : windowHeight
+  readonly property int cardCrossLen: vertical ? cardMain : cardCross
+  readonly property int hitCross: edgeFirst ? 0 : Math.max(0, crossAxisLen - edgeGap - cardCrossLen)
+  readonly property int cardCrossPos: edgeFirst ? edgeGap : Math.max(0, crossAxisLen - edgeGap - cardCrossLen)
   // The inward face of the card: where popups hang off.
   readonly property int cardInnerFace: edgeFirst ? edgeGap + cardCross : labelBand
 
@@ -821,16 +860,37 @@ Item {
                                     : edge === "left"   ? (Edges.Right | Edges.Bottom)
                                     :                     (Edges.Left | Edges.Bottom)
 
-  function popupAnchorPoint(target, window, popupW, popupH) {
+  function popupAnchorPoint(target, window, popupW, popupH, clearMax) {
     var pos = window.contentItem.mapFromItem(target, 0, 0)
     var gapIn = Style.spacing.sm
-    var across = edgeFirst ? cardInnerFace + gapIn : cardInnerFace - gapIn
+    var across
+    if (clearMax) {
+      // The settings popup opens against the card's *maximum* inward face:
+      // while it is open the window buffer is frozen at the slider's biggest
+      // icon size, so the card can grow that far. Anchor the popup clear of
+      // that, otherwise dragging the slider to the top would slide the grown
+      // card up under the popup's bottom edge. The menu, which hugs the card
+      // at its current size, keeps the plain branch.
+      var maxSv = Style.space(iconSizeMax)
+      var maxCardAcross = vertical
+        ? windowAxesAt(maxSv).main - (labels && !vertical ? Style.space(240) : 0)
+        : Border.top(dockBorder) + pad + maxSv + pad + Border.bottom(dockBorder)
+      var unReservedLen = vertical ? windowMain : windowCross
+      across = edgeFirst ? maxCardAcross + edgeGap + gapIn
+                         : unReservedLen - edgeGap - maxCardAcross - gapIn
+    } else {
+      across = edgeFirst ? cardInnerFace + gapIn : cardInnerFace - gapIn
+    }
     if (vertical) {
-      var y = Math.round(pos.y + target.height / 2 - popupH / 2)
+      var y = vertical && clearMax
+        ? Math.round(root.windowHeight / 2 - popupH / 2)
+        : Math.round(pos.y + target.height / 2 - popupH / 2)
       y = Math.max(0, Math.min(y, window.height - popupH))
       return { x: across, y: y }
     }
-    var x = Math.round(pos.x + target.width / 2 - popupW / 2)
+    var x = clearMax
+      ? Math.round(root.windowWidth / 2 - popupW / 2)
+      : Math.round(pos.x + target.width / 2 - popupW / 2)
     x = Math.max(0, Math.min(x, window.width - popupW))
     return { x: x, y: across }
   }
@@ -947,6 +1007,33 @@ Item {
     if (root.edge === "top")    return { x: m.x, y: m.y, width: m.width, height: thick }
     if (root.edge === "right")  return { x: m.x + m.width - thick, y: m.y, width: thick, height: m.height }
     return { x: m.x, y: m.y, width: thick, height: m.height }
+  }
+
+  // The dock window's on-screen rect (global compositor-layout units), as
+  // the layer would place it for the current edge/align/fullWidth and window
+  // size. Hyprland reports window layer geometry in these units; QML exposes
+  // the window's width/height but not x/y, so the anchor math mirrors the
+  // layer-shell rules instead of reading them.
+  function windowScreenRect(name) {
+    var monitors = Hyprland.monitors.values || []
+    var m = null
+    for (var i = 0; i < monitors.length; i++) {
+      if (String(monitors[i].name || "") === name) { m = monitors[i]; break }
+    }
+    if (!m) return null
+    var horizontal = root.edge === "bottom" || root.edge === "top"
+    var mainLen = horizontal ? m.width : m.height
+    var crossLen = horizontal ? m.height : m.width
+    var winMainLen = horizontal ? root.windowWidth : root.windowHeight
+    var winCrossLen = horizontal ? root.windowHeight : root.windowWidth
+    if (root.fullWidth) winMainLen = mainLen
+    var mainPos = root.align === "start" ? 0
+      : root.align === "end" ? mainLen - winMainLen
+      : Math.round((mainLen - winMainLen) / 2)
+    if (root.edge === "bottom") return { x: m.x + mainPos, y: m.y + crossLen - winCrossLen }
+    if (root.edge === "top")    return { x: m.x + mainPos, y: m.y }
+    if (root.edge === "right")  return { x: m.x + mainLen - winCrossLen, y: m.y + mainPos }
+    return                           { x: m.x, y: m.y + mainPos }
   }
 
   property bool dodgeBlocked: false
@@ -1391,12 +1478,15 @@ Item {
           width: dockWindow.cardW
           height: dockWindow.cardH
           // The card length animates with the lens so the grown row is
-          // always wrapped, never clipped.
+          // always wrapped, never clipped. With the settings popup open the
+          // card instead snaps to the new size: an animated edge sweeping
+          // under the popup's translucent margin reads as ghosting next to
+          // its border.
           Behavior on width {
-            NumberAnimation { duration: root.animMs; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.settingsOpen ? 0 : root.animMs; easing.type: Easing.OutCubic }
           }
           Behavior on height {
-            NumberAnimation { duration: root.animMs; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.settingsOpen ? 0 : root.animMs; easing.type: Easing.OutCubic }
           }
           radius: root.cardRadius
           // The popup surface, not the raw palette background: a theme that
