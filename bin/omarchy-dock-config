@@ -1,0 +1,272 @@
+#!/bin/bash
+#
+# Configurator for the animated.dock shell plugin.
+#
+# Everything it writes lands in the plugin's entry in shell.json, which the
+# Omarchy shell re-reads on save — so every change here shows up on the dock
+# immediately, with no restart. (Only edits to the plugin's own QML files
+# need `omarchy restart shell`; nothing here touches those.)
+#
+# The dock drives shell.json through the non-interactive subcommands
+# (pin / unpin / move) rather than writing QML-side, so the staged-tempfile
+# validation below stays the *only* writer. Indices are 0-based, matching
+# items[] as the plugin reads it.
+
+set -uo pipefail
+
+CFG="$HOME/.config/omarchy/shell.json"
+DOCK='(.plugins[] | select(.id=="animated.dock"))'
+
+# ----------------------------------------------------------------- plumbing
+
+die() {
+  echo "error: $1" >&2
+  exit 1
+}
+
+require() {
+  command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed."
+}
+
+# Write a mutated config atomically, but only if the result is still valid
+# JSON that keeps the dock entry intact. A broken shell.json costs you the
+# whole bar, not just the dock. Extra arguments are passed to jq, for
+# callers that need --arg/--argjson bindings in the expression.
+apply() {
+  local expr=$1 tmp
+  shift
+  tmp=$(mktemp "$CFG.XXXXXX") || return 1
+
+  if ! jq "$@" "$DOCK |= ($expr)" "$CFG" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "error: update failed — nothing changed." >&2
+    return 1
+  fi
+
+  if ! jq -e "$DOCK | .id" "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo "error: update would have dropped the dock entry — nothing changed." >&2
+    return 1
+  fi
+
+  cp "$CFG" "$CFG.bak"
+  mv "$tmp" "$CFG"
+}
+
+item_count() { jq -r "$DOCK | .items | length" "$CFG" 2>/dev/null; }
+
+item_label() {
+  jq -r "$DOCK.items[$1] |
+    if .spacer == true then \"── divider ──\"
+    else ((.label // .desktop // .exec // \"(unnamed)\") +
+         (if .when then \" (when)\" else \"\" end))
+    end" "$CFG" 2>/dev/null
+}
+
+valid_index() {
+  local idx=$1 count
+  [[ $idx =~ ^[0-9]+$ ]] || return 1
+  count=$(item_count)
+  [[ $idx -lt ${count:-0} ]]
+}
+
+# -------------------------------------------------- programmatic subcommands
+
+# Resolve an appId to a desktop entry id the way the plugin matches windows,
+# roughly in reverse: exact basename, then case-insensitive basename or
+# reverse-DNS tail, then StartupWMClass.
+find_entry_for_appid() {
+  local appid=$1 dir file id
+  local tail=${appid##*.}
+  local dirs=("$HOME/.local/share/applications" /usr/share/applications)
+
+  for dir in "${dirs[@]}"; do
+    [[ -f "$dir/$appid.desktop" ]] && { echo "$appid"; return 0; }
+  done
+
+  local lc_appid=${appid,,} lc_tail=${tail,,}
+  for dir in "${dirs[@]}"; do
+    [[ -d $dir ]] || continue
+    for file in "$dir"/*.desktop; do
+      [[ -e $file ]] || continue
+      id=$(basename "$file" .desktop)
+      local lc_id=${id,,}
+      if [[ $lc_id == "$lc_appid" || $lc_id == "$lc_tail" || ${lc_id##*.} == "$lc_appid" ]]; then
+        echo "$id"; return 0
+      fi
+    done
+  done
+
+  for dir in "${dirs[@]}"; do
+    [[ -d $dir ]] || continue
+    file=$(grep -ilE "^StartupWMClass=${appid}$" "$dir"/*.desktop 2>/dev/null | head -1)
+    [[ -n $file ]] && { basename "$file" .desktop; return 0; }
+  done
+
+  return 1
+}
+
+cmd_pin() {
+  local appid=$1 pos=${2:-}
+  [[ -n $appid ]] || die "usage: omarchy-dock-config pin <appId> [index]"
+  if [[ -n $pos && ! $pos =~ ^[0-9]+$ ]]; then
+    die "pin: index must be a non-negative integer"
+  fi
+
+  # Belt and braces — the dock only offers Pin on unclaimed apps, but the
+  # CLI can be called by hand.
+  if jq -e --arg k "${appid,,}" "$DOCK | any(.items[]?;
+        ([.appId // empty] | flatten | map(ascii_downcase) | index(\$k) != null)
+        or ((.desktop // empty | ascii_downcase | sub(\"\\\\.desktop$\"; \"\")) == \$k))" \
+      "$CFG" >/dev/null 2>&1; then
+    echo "already pinned: $appid"
+    return 0
+  fi
+
+  local item entry
+  if entry=$(find_entry_for_appid "$appid"); then
+    item=$(jq -cn --arg d "$entry" '{desktop: $d}')
+  else
+    # No desktop entry to launch by — pin as a match-only item; the user
+    # can set an exec later.
+    item=$(jq -cn --arg a "$appid" '{appId: $a, label: $a}')
+  fi
+
+  if [[ -n $pos ]]; then
+    local count
+    count=$(item_count)
+    [[ $pos -gt ${count:-0} ]] && pos=$count
+    apply '.items |= (.[:$p] + [$item] + .[$p:])' \
+      --argjson item "$item" --argjson p "$pos" || exit 1
+    echo "pinned at $pos: $appid -> $item"
+  else
+    apply '.items += [$item]' --argjson item "$item" || exit 1
+    echo "pinned: $appid -> $item"
+  fi
+}
+
+cmd_unpin() {
+  local idx=$1
+  valid_index "$idx" || die "usage: omarchy-dock-config unpin <index> (0-based, have $(item_count) items)"
+  local label
+  label=$(item_label "$idx")
+  apply "del(.items[$idx])" || exit 1
+  echo "unpinned [$idx]: $label"
+}
+
+cmd_move() {
+  local from=$1 to=$2
+  valid_index "$from" || die "usage: omarchy-dock-config move <from> <to> (0-based)"
+  [[ $to =~ ^[0-9]+$ ]] || die "usage: omarchy-dock-config move <from> <to> (0-based)"
+  local count
+  count=$(item_count)
+  [[ $to -lt $count ]] || to=$((count - 1))
+  apply ".items |= (.[$from] as \$x | del(.[$from]) | .[:$to] + [\$x] + .[$to:])" || exit 1
+  echo "moved: $from -> $to"
+}
+
+cmd_set_item() {
+  local idx=$1 json=$2
+  valid_index "$idx" || die "usage: omarchy-dock-config set-item <index> <json> (0-based)"
+  echo "$json" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || die "set-item: not a JSON object: $json"
+  apply ".items[$idx] = \$item" --argjson item "$(echo "$json" | jq -c .)" || exit 1
+  echo "set [$idx]: $(echo "$json" | jq -c .)"
+}
+
+cmd_add() {
+  local json=$1 pos=${2:-}
+  echo "$json" | jq -e 'type == "object"' >/dev/null 2>&1 \
+    || die "add: not a JSON object: $json"
+  local item count
+  item=$(echo "$json" | jq -c .)
+  if [[ -n $pos ]]; then
+    [[ $pos =~ ^[0-9]+$ ]] || die "add: index must be a non-negative integer"
+    count=$(item_count)
+    [[ $pos -gt ${count:-0} ]] && pos=$count
+    apply '.items |= (.[:$p] + [$item] + .[$p:])' \
+      --argjson item "$item" --argjson p "$pos" || exit 1
+  else
+    apply '.items += [$item]' --argjson item "$item" || exit 1
+  fi
+  echo "added: $item"
+}
+
+# Dock-level settings. Value is JSON, so numbers, bools and strings all
+# come through typed; "null" deletes the key so the built-in default rules
+# again.
+cmd_set() {
+  local key=$1 value=$2
+  [[ $key =~ ^[a-zA-Z][a-zA-Z0-9]*$ ]] || die "usage: omarchy-dock-config set <key> <json-value>"
+  [[ $key == "id" || $key == "items" ]] && die "set: '$key' is not a settable key"
+  echo "$value" | jq -e '(. // empty) != null' >/dev/null 2>&1 \
+    || echo "$value" | jq -e 'null == .' >/dev/null 2>&1 \
+    || die "set: not valid JSON: $value"
+  if [[ $(echo "$value" | jq -c .) == "null" ]]; then
+    apply "del(.$key)" || exit 1
+    echo "unset: $key"
+  else
+    apply ".$key = \$v" --argjson v "$(echo "$value" | jq -c .)" || exit 1
+    echo "set: $key = $(echo "$value" | jq -c .)"
+  fi
+}
+
+cmd_state() {
+  require jq
+  [[ -f $CFG ]] || die "No shell.json at $CFG"
+  jq -r "$DOCK" "$CFG" 2>/dev/null \
+    || die "no entry for animated.dock in $CFG (the plugin is not enabled)"
+}
+
+if [[ $# -gt 0 ]]; then
+  case $1 in
+    pin)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_pin "${1:-}" "${2:-}" ;;
+    unpin)    require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_unpin "${1:-}" ;;
+    move)     require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_move "${1:-}" "${2:-}" ;;
+    set-item) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set_item "${1:-}" "${2:-}" ;;
+    add)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_add "${1:-}" "${2:-}" ;;
+    set)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set "${1:-}" "${2:-}" ;;
+    state)    cmd_state ;;
+    -h | --help | help)
+      cat <<'EOF'
+animated.dock configurator
+
+The plugin's own entry in ~/.config/omarchy/shell.json is the only config
+surface. These subcommands edit it atomically (backup at shell.json.bak),
+and the shell hot-reloads the change on save.
+
+  pin <appId> [index]    pin a running app's id (0-based items[] order)
+  unpin <index>          remove a pinned item
+  move <from> <to>       reorder a pinned item (0-based)
+  set-item <index> <json>  replace a pinned item wholesale
+  add <json> [index]     append (or insert) a raw item object
+  set <key> <json>       set a dock-level setting; "null" deletes a key
+  state                  print the plugin's entry
+
+Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
+magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
+tiles, tileRadius, tileInset, tileOpacity, border, cornerRadius, autohide,
+dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
+hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
+tintRunning, monochrome, glyphColor, fullWidth, edgeGap, items.
+
+Item forms in items[]:
+  { "desktop": "kitty" }                  launch a desktop entry
+  { "exec": "cmd", "icon": "...", "label": "..." }  run any command
+  { "exec": "cmd", "glyph": "NICON" }     a Nerd Font glyph instead of an icon
+  { "showApps": true }                    the shell app menu
+  { "trash": true }                       open the trash in the file manager
+  { "spacer": true }                      divider rule
+  { "when": "<cmd>" }                     show only while the command exits 0
+EOF
+      ;;
+    *) die "unknown subcommand '$1' (try --help)" ;;
+  esac
+else
+  cat <<'EOF'
+usage: omarchy-dock-config <subcommand> ...
+
+Programmatic editor for the animated.dock plugin entry in shell.json.
+Run with --help for the full command list and config reference.
+EOF
+fi

@@ -1,0 +1,54 @@
+{
+  "id": "animated.dock",
+  "edge": "bottom",
+  "align": "center",
+  "iconSize": 44,
+  "zoom": 0.45,
+  "magnify": true,
+  "spacing": 4,
+  "padding": 8,
+  "radius": 100,
+  "backgroundOpacity": 0.75,
+  "iconOpacity": 1.0,
+  "tiles": false,
+  "tileOpacity": 0.15,
+  "border": true,
+  "autohide": true,
+  "dodge": true,
+  "pressure": true,
+  "hotspotHeight": 6,
+  "showWhenEmpty": true,
+  "runningIndicator": "dot",
+  "labels": true,
+  "tintIcons": false,
+  "tintRunning": true,
+  "monochrome": false,
+  "items": [
+    {
+      "showApps": true,
+      "label": "Omarchy Menu",
+      "tint": true
+    },
+    {
+      "desktop": "org.gnome.Nautilus"
+    },
+    {
+      "desktop": "kitty"
+    },
+    {
+      "desktop": "vivaldi-stable"
+    },
+    {
+      "desktop": "steam"
+    },
+    {
+      "desktop": "heroic"
+    },
+    {
+      "desktop": "org.qbittorrent.qBittorrent"
+    },
+    {
+      "desktop": "com.vysp3r.ProtonPlus"
+    }
+  ]
+}
