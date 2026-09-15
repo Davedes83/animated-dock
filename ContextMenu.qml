@@ -53,6 +53,7 @@ PopupWindow {
   readonly property bool canLaunch: Util.isPlainObject(item)
     && (item.exec !== undefined || item.desktop !== undefined || entry !== null)
 
+  readonly property bool isApps: Util.isPlainObject(item) && item.showApps === true
   readonly property bool isRunningItem: Util.isPlainObject(item) && item.__running === true
 
   function openFor(cell) {
@@ -101,6 +102,8 @@ PopupWindow {
       out.push({ kind: "action", glyph: "󰐕", label: "New Window", act: "launch" })
     if (isRunningItem)
       out.push({ kind: "action", glyph: "󰐃", label: "Pin to Dock", act: "pin" })
+    else if (isApps)
+      out.push({ kind: "action", glyph: "󰒓", label: "Settings", act: "settings" })
     else if (launchable || isStatic)
       out.push({ kind: "action", glyph: "󰐃", label: "Unpin", act: "unpin" })
     if (wins.length > 1) {
@@ -129,6 +132,7 @@ PopupWindow {
     }
     else if (row.act === "launch") menu.dock.launchNewWindow(theItem, theEntry)
     else if (row.act === "pin") menu.dock.requestPin(theItem)
+    else if (row.act === "settings") menu.dock.openSettings(menu.anchorCell)
     else if (row.act === "unpin") menu.dock.requestUnpin(theItem)
     else if (row.act === "close-wins") { for (var i = 0; i < theWins.length; i++) theWins[i].close() }
     else if (row.kind === "window" && theWins[row.winIndex]) theWins[row.winIndex].activate()

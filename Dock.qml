@@ -218,10 +218,16 @@ Item {
     dock: root
   }
 
+  DockSettings {
+    id: settingsWindow
+    dock: root
+  }
+
   readonly property bool menuOpen: contextMenu.open
+  readonly property bool settingsOpen: settingsWindow.open
   readonly property int menuIndex: menuOpen && contextMenu.anchorCell ? contextMenu.anchorCell.index : -1
   // Anything that holds the dock revealed while it's up.
-  readonly property bool popupOpen: menuOpen
+  readonly property bool popupOpen: menuOpen || settingsOpen
 
   function openMenu(cell) {
     if (!cell || cell.isRule) return
@@ -265,8 +271,17 @@ Item {
   }
 
   // ContextMenu.close() calls this after dropping `open`, so the popup hold
-  // releases on the same tick the menu goes away.
+  // releases on the same tick the menu goes away. DockSettings.close() does
+  // the same.
   function menuReleased() { releasePopup() }
+  function popupReleased() { releasePopup() }
+
+  // A settings UI writes through the bundled configurator, which stages a
+  // mutation of shell.json and applies it atomically; the shell hot-reloads
+  // on save, so the change lands live. Values must be valid JSON literals.
+  function applySetting(key, jsonValue) {
+    Util.execDetached(configCmd + " set " + Util.shellQuote(key) + " " + Util.shellQuote(String(jsonValue)))
+  }
 
   // Same references in the same order.
   function sameWindows(a, b) {
@@ -299,6 +314,17 @@ Item {
     var idx = items.indexOf(item)
     if (idx < 0) return
     Util.execDetached(configCmd + " unpin " + idx)
+  }
+
+  // The Apps (showApps) icon's Settings row: open the dock's own settings
+  // window, anchored to the icon that summoned it.
+  function openSettings(cell) {
+    if (!cell) return
+    if (settingsOpen && settingsWindow.anchorCell === cell) {
+      settingsWindow.close()
+      return
+    }
+    settingsWindow.openFor(cell)
   }
 
   function windowsFor(item) { return running.windowsFor(item) }
@@ -410,6 +436,7 @@ Item {
 
   function beginDrag(cell, sceneX, sceneY) {
     contextMenu.close()
+    settingsWindow.close()
     var r = mainCoord(cell, sceneX, sceneY)
     dragGrabD = r - (vertical ? cell.y : cell.x)
     dragPointer = r
@@ -725,9 +752,21 @@ Item {
 
   readonly property color glyphColor: root.config.glyphColor === "accent" ? Color.accent : Color.popups.text
 
-  readonly property int cardRadius: root.config.cornerRadius !== undefined
-    ? Style.space(num0("cornerRadius", 0))
-    : Style.cornerRadius
+  // Corner rounding for the card: "rounded" (theme rounding, or an explicit
+  // cornerRadius px value), "square" (sharp, radius 0) or "pill" (fully
+  // rounded ends).
+  readonly property string cornerShape: {
+    var s = String(config.cornerShape || "").toLowerCase()
+    return (s === "square" || s === "pill") ? s : "rounded"
+  }
+
+  readonly property int cardRadius: {
+    if (cornerShape === "square") return 0
+    if (cornerShape === "pill") return Math.max(1, Math.round(cardCross / 2))
+    return root.config.cornerRadius !== undefined
+      ? Style.space(num0("cornerRadius", 0))
+      : Style.cornerRadius
+  }
 
   // A cell's extent along the main axis.
   function cellSize(item) {
@@ -864,6 +903,7 @@ Item {
       hoveredLabel = ""
       pointerInside = false
       contextMenu.close()
+      settingsWindow.close()
     }
   }
 
