@@ -25,8 +25,6 @@ Also on the dash2dock feature list:
   the dock out (`pressure` collapses the reveal delay to zero); while
   `dodge` is on, the dock stays hidden whenever a window — or a fullscreen
   window — overlaps the card's on-screen area.
-- **Scroll-to-cycle**: the wheel over a running icon steps through its
-  windows, MRU-first, with the label flashing the current title.
 - **Click-to-toggle-minimize**: a running and focused icon minimizes the app;
   a click on a running-but-unfocused one focuses its most recent window; not
   running launches.
