@@ -202,10 +202,30 @@ Item {
   // Animation length of the reflow, ms.
   readonly property int animMs: Math.round(num0("animation", 110))
 
+  // The slider's 0–1 override is applied on top of the theme's border color
+  // (RGB preserved, alpha forced), so the label matches what renders.
+  readonly property real borderOpacity: fraction("borderOpacity", 1.0)
   readonly property var dockBorder: flag("border", true)
-    ? Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+    ? (root.borderOpacity < 1
+      ? withBorderOpacity(Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2))), root.borderOpacity)
+      : Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2))))
     : Border.none()
   readonly property var tipBorder: Border.surfaceSpec("tooltip", "border", Color.tooltip.border, Math.max(1, Style.space(1)))
+
+  // Re-index the spec's colours with a forced alpha on the flat fill; a
+  // gradient keeps its stops, each tinted to the same opacity. Rectangle.border
+  // in Qt6 renders sub-opaque border colours correctly, so the spec is left on
+  // the cheap native path.
+  function withBorderOpacity(spec, opacity) {
+    var color = Util.alpha(Border.color(spec), opacity)
+    if (spec.gradient && spec.gradient.enabled) {
+      var stops = []
+      for (var i = 0; i < spec.gradient.colors.length; i++)
+        stops.push(Util.alpha(spec.gradient.colors[i], opacity))
+      return { color: color, widths: spec.widths, gradient: { colors: stops, angle: spec.gradient.angle, enabled: true } }
+    }
+    return { color: color, widths: spec.widths, gradient: spec.gradient }
+  }
 
   RunningModel {
     id: running
@@ -847,7 +867,7 @@ Item {
   // open — windowCross alone is the un-reserved figure and would leave the
   // card floating panel-height above the docked edge until the popup closes.
   readonly property int crossAxisLen: vertical ? windowWidth : windowHeight
-  readonly property int cardCrossLen: vertical ? cardMain : cardCross
+  readonly property int cardCrossLen: cardCross
   readonly property int hitCross: edgeFirst ? 0 : Math.max(0, crossAxisLen - edgeGap - cardCrossLen)
   readonly property int cardCrossPos: edgeFirst ? edgeGap : Math.max(0, crossAxisLen - edgeGap - cardCrossLen)
   // The inward face of the card: where popups hang off.
@@ -871,11 +891,8 @@ Item {
       // that, otherwise dragging the slider to the top would slide the grown
       // card up under the popup's bottom edge. The menu, which hugs the card
       // at its current size, keeps the plain branch.
-      var maxSv = Style.space(iconSizeMax)
-      var maxCardAcross = vertical
-        ? windowAxesAt(maxSv).main - (labels && !vertical ? Style.space(240) : 0)
-        : Border.top(dockBorder) + pad + maxSv + pad + Border.bottom(dockBorder)
-      var unReservedLen = vertical ? windowMain : windowCross
+      var maxCardAcross = root.maxCardThickness()
+      var unReservedLen = windowCross
       across = edgeFirst ? maxCardAcross + edgeGap + gapIn
                          : unReservedLen - edgeGap - maxCardAcross - gapIn
     } else {
@@ -1032,8 +1049,28 @@ Item {
       : Math.round((mainLen - winMainLen) / 2)
     if (root.edge === "bottom") return { x: m.x + mainPos, y: m.y + crossLen - winCrossLen }
     if (root.edge === "top")    return { x: m.x + mainPos, y: m.y }
-    if (root.edge === "right")  return { x: m.x + mainLen - winCrossLen, y: m.y + mainPos }
+    if (root.edge === "right")  return { x: m.x + m.width - winCrossLen, y: m.y + mainPos }
     return                           { x: m.x, y: m.y + mainPos }
+  }
+
+  // Ground-truth monitor rect (global compositor-layout units) for a named
+  // output, for positioning the settings popup on screen.
+  function monitorRect(name) {
+    var monitors = Hyprland.monitors.values || []
+    for (var i = 0; i < monitors.length; i++) {
+      if (String(monitors[i].name || "") === name) return monitors[i]
+    }
+    return null
+  }
+
+  // The card's thickness at a given icon slot (i.e. its extent on the cross
+  // axis, the direction it reaches in from the screen edge). The slider can
+  // grow the card to iconSizeMax, so the settings popup keeps clear of that.
+  function maxCardThickness(sv) {
+    var s = sv !== undefined ? sv : Style.space(iconSizeMax)
+    return (vertical ? Border.left(dockBorder) + Border.right(dockBorder)
+                     : Border.top(dockBorder) + Border.bottom(dockBorder))
+         + 2 * pad + s
   }
 
   property bool dodgeBlocked: false

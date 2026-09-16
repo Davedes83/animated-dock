@@ -248,7 +248,7 @@ and the shell hot-reloads the change on save.
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
 magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
-tiles, tileRadius, tileInset, tileOpacity, border, cornerRadius,
+tiles, tileRadius, tileInset, tileOpacity, border, borderOpacity, cornerRadius,
 cornerShape, autohide, dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
 hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
 tintRunning, monochrome, glyphColor, fullWidth, edgeGap, items.

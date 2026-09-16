@@ -230,6 +230,117 @@ PopupWindow {
 
       Column {
         width: settings.contentWidth
+        spacing: Style.spacing.xs
+
+        Row {
+          width: settings.contentWidth
+          spacing: Style.spacing.md
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Border opacity"
+            color: Color.popups.text
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: Math.round(borderOpacitySlider.liveValue) + "%"
+            color: Util.alpha(Color.popups.text, 0.6)
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        PanelSlider {
+          id: borderOpacitySlider
+          width: settings.contentWidth
+          minimum: 0
+          maximum: 100
+          step: 5
+          integer: true
+          value: Math.round(settings.dock.fraction("borderOpacity", 1.0) * 100)
+          fillColor: Color.accent
+          knobColor: Color.accent
+          onReleased: function(v) {
+            settings.dock.applySetting("borderOpacity", String(v / 100))
+          }
+        }
+      }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.xs
+
+        Row {
+          width: settings.contentWidth
+          spacing: Style.spacing.md
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Background opacity"
+            color: Color.popups.text
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: Math.round(bgOpacitySlider.liveValue) + "%"
+            color: Util.alpha(Color.popups.text, 0.6)
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        PanelSlider {
+          id: bgOpacitySlider
+          width: settings.contentWidth
+          minimum: 0
+          maximum: 100
+          step: 5
+          integer: true
+          value: Math.round(settings.dock.fraction("backgroundOpacity", 1.0) * 100)
+          fillColor: Color.accent
+          knobColor: Color.accent
+          onReleased: function(v) {
+            settings.dock.applySetting("backgroundOpacity", String(v / 100))
+          }
+        }
+      }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.sm
+
+        Text {
+          width: settings.contentWidth
+          text: "Position"
+          color: Color.popups.text
+          font.family: Style.font.resolvedFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        ButtonGroup {
+          options: [
+            { value: "bottom", label: "Bottom" },
+            { value: "top", label: "Top" },
+            { value: "left", label: "Left" },
+            { value: "right", label: "Right" }
+          ]
+          value: settings.dock.edge
+          foreground: Color.popups.text
+          background: Color.popups.background
+          accent: Color.accent
+          onChanged: function(v) {
+            settings.dock.applySetting("edge", JSON.stringify(String(v)))
+          }
+        }
+      }
+
+      Column {
+        width: settings.contentWidth
         spacing: Style.spacing.sm
 
         Text {
