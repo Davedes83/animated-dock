@@ -4,47 +4,17 @@
 
 # Animated Dock
 
-A macOS-style **fisheye** dock for the [Omarchy](https://omarchy.org/) shell,
-functionally equivalent to [dash2dock-lite](https://github.com/icedman/dash2dock-lite)
-and cast in a third-party Quickshell plugin (`animated.dock`), in the spirit
-and architecture of the `rdf.dock` Omarchy dock.
+A fisheye dock for the Omarchy shell with macOS-style icon magnification, smooth animations, intelligent hide/reveal, window cycling, and full customization all in a Quickshell plugin.
 
-The signature behaviour is the *continuous* magnifier: every pointer move
-inside the dock re-flows the icons in a lens around the pointer. Each icon's
-scale is a quadratic falloff from the pointer (`scale = 1 + zoom·p²`), the
-layout is anchored on the most magnified icon so the pointer never chases a
-target, and icons lift out of the bar as they grow. The flow animates through
-`Behaviour` bindings, so a stationary pointer settles and a moving one chases
-smoothly.
+The core feature is the continuous magnifier: as your pointer moves, icons flow around it with a smooth quadratic scale falloff, anchored to stay under your cursor without chasing. From there it adds:
 
-Also on the dash2dock feature list:
+Four edges with flexible positioning (start/center/end)
+Smart hide: pressure-reveal hotspot with dodge for overlapping windows
+Window controls: scroll to cycle through windows, click to minimize/focus/launch
+Running indic
 
-- **All four edges** (`bottom` / `top` / `left` / `right`), aligned to the
-  start, centre, or end of the edge.
-- **Edge-pressure reveal + intelli-hide**: a thin hotspot on the edge slides
-  the dock out (`pressure` collapses the reveal delay to zero); while
-  `dodge` is on, the dock stays hidden whenever a window — or a fullscreen
-  window — overlaps the card's on-screen area.
-- **Click-to-toggle-minimize**: a running and focused icon minimizes the app;
-  a click on a running-but-unfocused one focuses its most recent window; not
-  running launches.
-- **Running indicators** (`dot` / `line` / `none`), lit brighter for the
-  focused app, plus a count badge on grouped windows.
-- **Pinned + running sections**, split by an automatic divider; running apps
-  derive live from the compositor and are never written to config.
-- **Drag-to-reorder**, and drag across the divider to pin / unpin (the
-  divider doubles as the pinned/running boundary).
-- **Icon tinting and mono**: app icons can be colorized to the theme accent
-  (`tintIcons`, `tintRunning`, `monochrome`), so arbitrary apps sit next to
-  curated Nerd Font glyphs as one set.
-- **Multi-monitor**: the dock parks on the monitor you ask for, and a hover
-  on the hotspot of any monitor summons it there.
-- **IPC** for keybindings: `omarchy-shell animated.dock toggle`.
-
-Right-click (or click-and-hold, for trackpads) opens the app's own context
-menu — its **Desktop Actions** when it ships any (a browser's private
-window…), New Window, Pin/Unpin, per-window focus, and Close All. Clicking
-anywhere else, picking a row, or hovering another icon dismisses it.
+Right-click Omarchy menu opens the app's own context
+menu 
 
 ## Requirements
 
