@@ -37,18 +37,6 @@
     },
     {
       "desktop": "vivaldi-stable"
-    },
-    {
-      "desktop": "steam"
-    },
-    {
-      "desktop": "heroic"
-    },
-    {
-      "desktop": "org.qbittorrent.qBittorrent"
-    },
-    {
-      "desktop": "com.vysp3r.ProtonPlus"
     }
   ]
 }

@@ -46,10 +46,12 @@ PopupWindow {
   // another; they get no New Window row.
   readonly property bool launchable: Util.isPlainObject(item)
     && (item.exec !== undefined || item.desktop !== undefined || entry !== null)
-  // Static slots (Apps, Trash) are pinned items with no launch command; they
-  // can be unpinned but can't open "New Window".
+  // Static slots are pinned items with no launch command; they can be
+  // unpinned but can't open "New Window". Any config item counts — an
+  // appId-only item still resolves no desktop entry, so without listing
+  // config membership it would look locked in with no way out.
   readonly property bool isStatic: Util.isPlainObject(item)
-    && (item.showApps === true || item.trash === true)
+    && (item.showApps === true || item.trash === true || dock.items.indexOf(item) >= 0)
   readonly property bool canLaunch: Util.isPlainObject(item)
     && (item.exec !== undefined || item.desktop !== undefined || entry !== null)
 

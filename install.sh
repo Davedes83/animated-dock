@@ -119,6 +119,92 @@ else
   ok "appended require to hyprland.lua (backup: hyprland.lua.bak.$STAMP)"
 fi
 
+# ------------------------------------------------- fresh-install default items
+#
+# A brand-new dock starts with the four essentials — the Omarchy Menu, a file
+# manager, the user's default terminal, and their default browser — so it is
+# usable the moment it appears and everything else is one right-click away
+# (Unpin, pin running apps). Terminal/browser are resolved from the user's own
+# XDG/Omarchy defaults rather than hardcoded, so the seeded set matches the
+# machine it lands on.
+
+resolve_file_manager() {
+  local apps="/usr/share/applications:$HOME/.local/share/applications"
+  local cand
+  for cand in org.gnome.Nautilus org.kde.dolphin thunar nemo caja pcmanfm; do
+    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "org.gnome.Nautilus"
+}
+
+# Real desktop id (no .desktop suffix) for the user's default terminal.
+resolve_terminal() {
+  local id=""
+  id=$(xdg-terminal-exec --print-id 2>/dev/null || true)
+  id=${id%%:*}
+  id=${id%.desktop}
+  if [[ -n $id ]] && { [[ -f /usr/share/applications/$id.desktop ]] || [[ -f "$HOME/.local/share/applications/$id.desktop" ]]; }; then
+    echo "$id"
+    return
+  fi
+  # Omarchy's CLI reports a friendly label; map it back to a real desktop id.
+  id=$(omarchy-default-terminal 2>/dev/null || true)
+  case "$id" in
+    kitty) echo "kitty"; return ;;
+    foot) echo "foot"; return ;;
+    ghostty) echo "com.mitchellh.ghostty"; return ;;
+    alacritty)
+      [[ -f /usr/share/applications/org.alacritty.desktop ]] && { echo "org.alacritty"; return; }
+      echo "alacritty"; return
+      ;;
+  esac
+  local cand
+  for cand in kitty foot com.mitchellh.ghostty alacritty wezterm xfce4-terminal org.gnome.Terminal xterm; do
+    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "kitty"
+}
+
+# Real desktop id for the user's default browser; `xdg-settings` is the XDG
+# authority, with `$BROWSER` unset so it reports the xdg-config default.
+resolve_browser() {
+  local id=""
+  id=$(env -u BROWSER xdg-settings get default-web-browser 2>/dev/null || true)
+  id=${id%.desktop}
+  if [[ -n $id ]] && { [[ -f /usr/share/applications/$id.desktop ]] || [[ -f "$HOME/.local/share/applications/$id.desktop" ]]; }; then
+    echo "$id"
+    return
+  fi
+  local cand
+  for cand in firefox chromium google-chrome brave-browser microsoft-edge zen vivaldi-stable; do
+    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "firefox"
+}
+
+# The `items` array for a fresh dock, as JSON: Menu, Files, terminal, browser.
+default_items() {
+  jq -nc \
+    --arg fm "$(resolve_file_manager)" \
+    --arg term "$(resolve_terminal)" \
+    --arg browser "$(resolve_browser)" \
+    '[
+      { "showApps": true, "label": "Omarchy Menu", "tint": true },
+      { "desktop": $fm },
+      { "desktop": $term },
+      { "desktop": $browser }
+    ]'
+}
+
 # --------------------------------------------------------------- shell.json
 #
 # shell.json belongs to the whole shell, not just the dock, so it is merged
@@ -144,19 +230,27 @@ if [[ ! -f $CFG ]]; then
 fi
 
 seed_config() {
-  local tmp
+  local tmp dock
   tmp=$(mktemp "$CFG.XXXXXX") || die "could not stage a shell.json update."
 
-  if ! jq --slurpfile dock "$REPO/config/shell.dock.json" \
-    '.plugins = ((.plugins // []) | map(select(.id != "animated.dock")) + $dock)' \
+  # The dock entry's style keys stay the repo's defaults from
+  # config/shell.dock.json; only `items` is swapped for the per-user set.
+  if ! dock=$(jq -c --argjson items "$(default_items)" '.items = $items' "$REPO/config/shell.dock.json" 2>/dev/null); then
+    rm -f "$tmp"
+    die "could not build the default dock entry."
+  fi
+
+  if ! jq --argjson dock "$dock" \
+    '.plugins = ((.plugins // []) | map(select(.id != "animated.dock")) + [$dock])' \
     "$CFG" >"$tmp" 2>/dev/null; then
     rm -f "$tmp"
     die "failed to merge the dock entry — shell.json is unchanged."
   fi
 
-  if ! jq -e '.plugins[] | select(.id=="animated.dock") | .id' "$tmp" >/dev/null 2>&1; then
+  if ! jq -e --argjson dock "$dock" '
+      .plugins[] | select(.id == "animated.dock") | .items' "$tmp" >/dev/null 2>&1; then
     rm -f "$tmp"
-    die "merge dropped the dock entry — shell.json is unchanged."
+    die "merge dropped the dock items — shell.json is unchanged."
   fi
 
   # Nothing to preserve when this run created the file a moment ago.
@@ -167,14 +261,12 @@ seed_config() {
 backup_note() { $CREATED_CFG || printf ' (backup: shell.json.bak.%s)' "$STAMP"; }
 
 if $DRY_RUN; then
-  printf '   would seed or keep the animated.dock entry in shell.json\n'
-elif jq -e '.plugins[]? | select(.id=="animated.dock")' "$CFG" >/dev/null 2>&1; then
-  if $REPLACE_CONFIG; then
-    seed_config
-    ok "replaced the dock entry with this repo's defaults$(backup_note)"
-  else
-    ok "kept your existing dock entry (pass --replace-config to reset it to defaults)"
-  fi
+  printf '   would seed the dock entry with items: %s\n' "$(default_items | jq -c .)"
+elif $REPLACE_CONFIG; then
+  seed_config
+  ok "replaced the dock entry with this machine's defaults$(backup_note)"
+elif jq -e '.plugins[]? | select(.id=="animated.dock") | has("items")' "$CFG" >/dev/null 2>&1; then
+  ok "kept your existing dock entry (pass --replace-config to reset it to defaults)"
 else
   seed_config
   ok "seeded the default dock entry$(backup_note)"

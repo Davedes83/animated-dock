@@ -56,7 +56,8 @@ omarchy plugin add https://github.com/<you>/animated-dock --enable
 ```
 
 That's the whole install: the repo root is the plugin. The dock appears with
-the starter items from `config/shell.dock.json` plus your running apps.
+a starter set matched to your machine — the Omarchy Menu, a file manager,
+your default terminal, and your default browser — plus your running apps.
 Two optional extras the plugin manager doesn't do:
 
 - **Blur behind the dock** — copy [hypr/dock.lua](hypr/dock.lua) to
@@ -164,7 +165,9 @@ Edits to `shell.json` need none of this — the shell hot-reloads that on save.
             so the repo installs directly via `omarchy plugin add`)
 bin/        omarchy-dock-config, the programmatic configurator
 hypr/       dock.lua — blur and layer rules for Hyprland
-config/     shell.dock.json — the starter dock entry for shell.json
+config/     shell.dock.json — the dock entry's style defaults for shell.json
+            (items are resolved per user at install: Menu, Files, the
+            default terminal and browser)
 ```
 
 The heat is in `Dock.qml`: a 16 ms loop eases each cell's scale toward the

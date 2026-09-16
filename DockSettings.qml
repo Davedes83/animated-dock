@@ -339,6 +339,17 @@ PopupWindow {
         }
       }
 
+      Toggle {
+        id: fullWidthToggle
+        width: settings.contentWidth
+        label: "Full length"
+        description: "Span the whole edge of the screen."
+        checked: settings.dock.flag("fullWidth", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: settings.dock.applySetting("fullWidth", String(!settings.dock.flag("fullWidth", false)))
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.sm
