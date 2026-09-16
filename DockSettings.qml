@@ -377,6 +377,31 @@ PopupWindow {
           }
         }
       }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.sm
+
+        Text {
+          width: settings.contentWidth
+          text: "Support"
+          color: Color.popups.text
+          font.family: Style.font.resolvedFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Button {
+          width: settings.contentWidth
+          iconText: "☕"
+          text: "Support me on Ko-fi"
+          foreground: Color.popups.text
+          accent: Color.accent
+          onClicked: {
+            settings.close()
+            Util.execDetached("xdg-open https://ko-fi.com/davedes")
+          }
+        }
+      }
     }
   }
 }
