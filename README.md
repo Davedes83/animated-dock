@@ -1,3 +1,7 @@
+<a href='https://ko-fi.com/O3N726LJT4' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi5.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
+
+<img width="665" height="754" alt="preview" src="https://github.com/user-attachments/assets/07ebb324-9f28-4d82-89eb-91e8a2131fda" />
+
 # Animated Dock
 
 A macOS-style **fisheye** dock for the [Omarchy](https://omarchy.org/) shell,
