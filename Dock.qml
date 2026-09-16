@@ -1567,7 +1567,7 @@ Item {
 
       BorderSurface {
         id: tip
-        visible: root.labels && dockWindow.shown && root.hoveredLabel !== "" && !root.dragging
+        visible: root.labels && root.flag("tooltips", true) && dockWindow.shown && root.hoveredLabel !== "" && !root.dragging
         height: root.labelHeight
         width: Math.round(tipText.implicitWidth + Style.spacing.xxl * 2)
         // Centred on the hovered icon along the edge, clamped so a label

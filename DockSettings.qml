@@ -378,6 +378,17 @@ PopupWindow {
         }
       }
 
+      Toggle {
+        id: tooltipsToggle
+        width: settings.contentWidth
+        label: "Show icon name on hover"
+        description: "Show the icon's name when hovering over it."
+        checked: settings.dock.flag("tooltips", true)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: settings.dock.applySetting("tooltips", String(!settings.dock.flag("tooltips", true)))
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.sm
