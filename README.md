@@ -24,7 +24,7 @@ menu
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/<you>/animated-dock --enable
+omarchy plugin add https://github.com/Davedes83/animated-dock --enable
 ```
 
 That's the whole install: the repo root is the plugin. The dock appears with
@@ -42,7 +42,7 @@ Two optional extras the plugin manager doesn't do:
 ### From a checkout
 
 ```bash
-git clone https://github.com/<you>/animated-dock ~/src/animated-dock
+git clone https://github.com/Davedes83/animated-dock ~/src/animated-dock
 cd ~/src/animated-dock
 ./install.sh
 ```
