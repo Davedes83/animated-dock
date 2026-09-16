@@ -159,3 +159,7 @@ right-click menu.
 
 It only removes symlinks that point back into this checkout, so anything you
 installed another way is left alone.
+
+## License
+
+MIT
