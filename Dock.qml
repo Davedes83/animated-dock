@@ -1589,6 +1589,13 @@ Item {
           id: tipText
           anchors.centerIn: parent
           text: root.hoveredLabel
+
+          // The window title (`hoveredLabel`) is remote/untrusted content —
+          // e.g. a browser tab name. Force plain text so title markup can
+          // never be interpreted as rich text (no image/resource loading
+          // from an injected <img src=…>).
+          textFormat: Text.PlainText
+
           color: Color.tooltip.text
           font.family: Style.font.resolvedFamily
           font.pixelSize: Style.font.bodySmall
