@@ -187,6 +187,18 @@ PopupWindow {
           }
       }
 
+      PanelSeparator {
+        foreground: Color.popups.text
+      }
+
+      PanelSectionHeader {
+        text: "APPEARANCE"
+        foreground: Color.popups.text
+        fontFamily: Style.font.resolvedFamily
+        color: Color.popups.text
+        fontSize: Style.font.body
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.xs
@@ -228,15 +240,113 @@ PopupWindow {
         }
       }
 
-      Toggle {
-        id: autohideToggle
+      Column {
         width: settings.contentWidth
-        label: "Auto-hide"
-        description: "Slide the dock off-screen until the edge is brushed."
-        checked: settings.dock.flag("autohide", true)
+        spacing: Style.spacing.xs
+
+        Row {
+          width: settings.contentWidth
+          spacing: Style.spacing.md
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Background opacity"
+            color: Color.popups.text
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: Math.round(bgOpacitySlider.liveValue) + "%"
+            color: Util.alpha(Color.popups.text, 0.6)
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        DragSlider {
+          id: bgOpacitySlider
+          width: settings.contentWidth
+          minimum: 0
+          maximum: 100
+          step: 5
+          integer: true
+          value: Math.round(settings.dock.fraction("backgroundOpacity", 1.0) * 100)
+          fillColor: Color.accent
+          knobColor: Color.accent
+          onReleased: function(v) {
+            Util.execDetached(settings.dock.configCmd + " opacity " + Util.shellQuote(String(v / 100)))
+          }
+        }
+      }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.sm
+
+        Text {
+          width: settings.contentWidth
+          text: "Corner Shape"
+          color: Color.popups.text
+          font.family: Style.font.resolvedFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        ButtonGroup {
+          options: [
+            { value: "rounded", label: "Rounded" },
+            { value: "square", label: "Square" },
+            { value: "pill", label: "Pill" }
+          ]
+          value: settings.dock.cornerShape
+          foreground: Color.popups.text
+          background: Color.popups.background
+          accent: Color.accent
+          onChanged: function(v) {
+            Util.execDetached(settings.dock.configCmd + " corner-shape " + Util.shellQuote(String(v)))
+          }
+        }
+      }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.sm
+
+        Text {
+          width: settings.contentWidth
+          text: "Position"
+          color: Color.popups.text
+          font.family: Style.font.resolvedFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        ButtonGroup {
+          options: [
+            { value: "bottom", label: "Bottom" },
+            { value: "top", label: "Top" },
+            { value: "left", label: "Left" },
+            { value: "right", label: "Right" }
+          ]
+          value: settings.dock.edge
+          foreground: Color.popups.text
+          background: Color.popups.background
+          accent: Color.accent
+          onChanged: function(v) {
+            settings.dock.applySetting("edge", JSON.stringify(String(v)))
+          }
+        }
+      }
+
+      Toggle {
+        id: fullWidthToggle
+        width: settings.contentWidth
+        label: "Full length"
+        description: "Span the whole edge of the screen."
+        checked: settings.dock.flag("fullWidth", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("autohide", String(!settings.dock.flag("autohide", true)))
+        onClicked: settings.dock.applySetting("fullWidth", String(!settings.dock.flag("fullWidth", false)))
       }
 
       Toggle {
@@ -248,51 +358,6 @@ PopupWindow {
         foreground: Color.popups.text
         accent: Color.accent
         onClicked: settings.dock.applySetting("border", String(!settings.dock.flag("border", true)))
-      }
-
-      Toggle {
-        id: matchBarOpacityToggle
-        width: settings.contentWidth
-        label: "Sync taskbar opacity"
-        description: "Make the taskbar's background as opaque as the dock's."
-        checked: settings.dock.flag("matchBarOpacity", false)
-        foreground: Color.popups.text
-        accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("matchBarOpacity", false)
-          Util.execDetached(settings.dock.configCmd
-            + " matchbar-opacity " + (next ? "true" : "false"))
-        }
-      }
-
-      Toggle {
-        id: matchBarCornersToggle
-        width: settings.contentWidth
-        label: "Sync taskbar corners"
-        description: "Give the taskbar the dock's corner shape (rounded, square or pill)."
-        checked: settings.dock.flag("matchBarCorners", false)
-        foreground: Color.popups.text
-        accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("matchBarCorners", false)
-          Util.execDetached(settings.dock.configCmd
-            + " matchbar-corners " + (next ? "true" : "false"))
-        }
-      }
-
-      Toggle {
-        id: matchBarGlowToggle
-        width: settings.contentWidth
-        label: "Sync taskbar glow"
-        description: "Give the taskbar the dock's border glow."
-        checked: settings.dock.flag("matchBarGlow", false)
-        foreground: Color.popups.text
-        accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("matchBarGlow", false)
-          Util.execDetached(settings.dock.configCmd
-            + " matchbar-glow " + (next ? "true" : "false"))
-        }
       }
 
       Column {
@@ -334,6 +399,18 @@ PopupWindow {
             settings.dock.applySetting("borderOpacity", String(v / 100))
           }
         }
+      }
+
+      PanelSeparator {
+        foreground: Color.popups.text
+      }
+
+      PanelSectionHeader {
+        text: "GLOW"
+        foreground: Color.popups.text
+        fontFamily: Style.font.resolvedFamily
+        color: Color.popups.text
+        fontSize: Style.font.body
       }
 
       Toggle {
@@ -429,113 +506,27 @@ PopupWindow {
         }
       }
 
-      Column {
-        width: settings.contentWidth
-        spacing: Style.spacing.xs
-
-        Row {
-          width: settings.contentWidth
-          spacing: Style.spacing.md
-
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: "Background opacity"
-            color: Color.popups.text
-            font.family: Style.font.resolvedFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: Math.round(bgOpacitySlider.liveValue) + "%"
-            color: Util.alpha(Color.popups.text, 0.6)
-            font.family: Style.font.resolvedFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        DragSlider {
-          id: bgOpacitySlider
-          width: settings.contentWidth
-          minimum: 0
-          maximum: 100
-          step: 5
-          integer: true
-          value: Math.round(settings.dock.fraction("backgroundOpacity", 1.0) * 100)
-          fillColor: Color.accent
-          knobColor: Color.accent
-          onReleased: function(v) {
-            Util.execDetached(settings.dock.configCmd + " opacity " + Util.shellQuote(String(v / 100)))
-          }
-        }
+      PanelSeparator {
+        foreground: Color.popups.text
       }
 
-      Column {
-        width: settings.contentWidth
-        spacing: Style.spacing.sm
-
-        Text {
-          width: settings.contentWidth
-          text: "Position"
-          color: Color.popups.text
-          font.family: Style.font.resolvedFamily
-          font.pixelSize: Style.font.bodySmall
-        }
-
-        ButtonGroup {
-          options: [
-            { value: "bottom", label: "Bottom" },
-            { value: "top", label: "Top" },
-            { value: "left", label: "Left" },
-            { value: "right", label: "Right" }
-          ]
-          value: settings.dock.edge
-          foreground: Color.popups.text
-          background: Color.popups.background
-          accent: Color.accent
-          onChanged: function(v) {
-            settings.dock.applySetting("edge", JSON.stringify(String(v)))
-          }
-        }
+      PanelSectionHeader {
+        text: "BEHAVIOUR"
+        foreground: Color.popups.text
+        fontFamily: Style.font.resolvedFamily
+        color: Color.popups.text
+        fontSize: Style.font.body
       }
 
       Toggle {
-        id: fullWidthToggle
+        id: autohideToggle
         width: settings.contentWidth
-        label: "Full length"
-        description: "Span the whole edge of the screen."
-        checked: settings.dock.flag("fullWidth", false)
+        label: "Auto-hide"
+        description: "Slide the dock off-screen until the edge is brushed."
+        checked: settings.dock.flag("autohide", true)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("fullWidth", String(!settings.dock.flag("fullWidth", false)))
-      }
-
-      Column {
-        width: settings.contentWidth
-        spacing: Style.spacing.sm
-
-        Text {
-          width: settings.contentWidth
-          text: "Corner Shape"
-          color: Color.popups.text
-          font.family: Style.font.resolvedFamily
-          font.pixelSize: Style.font.bodySmall
-        }
-
-        ButtonGroup {
-          options: [
-            { value: "rounded", label: "Rounded" },
-            { value: "square", label: "Square" },
-            { value: "pill", label: "Pill" }
-          ]
-          value: settings.dock.cornerShape
-          foreground: Color.popups.text
-          background: Color.popups.background
-          accent: Color.accent
-          onChanged: function(v) {
-            Util.execDetached(settings.dock.configCmd + " corner-shape " + Util.shellQuote(String(v)))
-          }
-        }
+        onClicked: settings.dock.applySetting("autohide", String(!settings.dock.flag("autohide", true)))
       }
 
       Toggle {
@@ -547,6 +538,75 @@ PopupWindow {
         foreground: Color.popups.text
         accent: Color.accent
         onClicked: settings.dock.applySetting("tooltips", String(!settings.dock.flag("tooltips", true)))
+      }
+
+      PanelSeparator {
+        foreground: Color.popups.text
+      }
+
+      PanelSectionHeader {
+        text: "TASKBAR SYNC"
+        foreground: Color.popups.text
+        fontFamily: Style.font.resolvedFamily
+        color: Color.popups.text
+        fontSize: Style.font.body
+      }
+
+      Toggle {
+        id: matchBarOpacityToggle
+        width: settings.contentWidth
+        label: "Sync taskbar opacity"
+        description: "Make the taskbar's background as opaque as the dock's."
+        checked: settings.dock.flag("matchBarOpacity", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: {
+          var next = !settings.dock.flag("matchBarOpacity", false)
+          Util.execDetached(settings.dock.configCmd
+            + " matchbar-opacity " + (next ? "true" : "false"))
+        }
+      }
+
+      Toggle {
+        id: matchBarCornersToggle
+        width: settings.contentWidth
+        label: "Sync taskbar corners"
+        description: "Give the taskbar the dock's corner shape (rounded, square or pill)."
+        checked: settings.dock.flag("matchBarCorners", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: {
+          var next = !settings.dock.flag("matchBarCorners", false)
+          Util.execDetached(settings.dock.configCmd
+            + " matchbar-corners " + (next ? "true" : "false"))
+        }
+      }
+
+      Toggle {
+        id: matchBarGlowToggle
+        width: settings.contentWidth
+        label: "Sync taskbar glow"
+        description: "Give the taskbar the dock's border glow."
+        checked: settings.dock.flag("matchBarGlow", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: {
+          var next = !settings.dock.flag("matchBarGlow", false)
+          Util.execDetached(settings.dock.configCmd
+            + " matchbar-glow " + (next ? "true" : "false"))
+        }
+      }
+
+      PanelSeparator {
+        foreground: Color.popups.text
+      }
+
+      PanelSectionHeader {
+        text: "SUPPORT"
+        foreground: Color.popups.text
+        fontFamily: Style.font.resolvedFamily
+        color: Color.popups.text
+        fontSize: Style.font.body
       }
 
       Column {
@@ -573,6 +633,7 @@ PopupWindow {
           }
         }
       }
+
     }
   }
 }
