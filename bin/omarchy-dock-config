@@ -221,6 +221,76 @@ cmd_state() {
     || die "no entry for animated.dock in $CFG (the plugin is not enabled)"
 }
 
+# Apply a full-document jq filter with the same atomic-write and validity
+# checks as apply(). Unlike apply(), it is not scoped to the dock entry:
+# it may touch `.bar` and the dock entry together in one atomic write (one
+# shell reload, not two). The dock entry must survive whatever it does.
+apply_bar() {
+  local expr=$1 tmp
+  shift
+  tmp=$(mktemp "$CFG.XXXXXX") || return 1
+
+  if ! jq "$@" "$expr" "$CFG" >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "error: bar update failed — nothing changed." >&2
+    return 1
+  fi
+
+  # A jq expression like `a, b` streams multiple documents; shell.json must
+  # stay a single JSON object, so refuse anything that emits more than one.
+  if ! jq -se 'length == 1' "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo "error: bar update produced multiple documents — nothing changed." >&2
+    return 1
+  fi
+
+  if ! jq -e "$DOCK | .id" "$tmp" >/dev/null 2>&1; then
+    rm -f "$tmp"
+    echo "error: update would have broken shell.json — nothing changed." >&2
+    return 1
+  fi
+
+  cp "$CFG" "$CFG.bak"
+  mv "$tmp" "$CFG"
+}
+
+# Toggle "Sync taskbar opacity": on -> the taskbar background opacity tracks
+# the dock's own backgroundOpacity (written as bar.backgroundOpacity in
+# shell.json); off -> the taskbar returns to its normal opaque background.
+cmd_matchbar_opacity() {
+  local on=$1
+  [[ $on == "true" || $on == "false" ]] \
+    || die "usage: omarchy-dock-config matchbar-opacity <true|false>"
+
+  local current
+  current=$(jq -r "$DOCK.backgroundOpacity // 1.0" "$CFG" 2>/dev/null)
+  if [[ -z $current || $current == "null" ]]; then current=1.0; fi
+
+  if [[ $on == "true" ]]; then
+    apply_bar \
+      '(.bar.backgroundOpacity = $o) | (.plugins[] | select(.id=="animated.dock")).matchBarOpacity = true' \
+      --argjson o "$current" \
+      || exit 1
+    echo "matchbar-opacity: on (bar.backgroundOpacity = $current)"
+  else
+    apply_bar \
+      'del(.bar.backgroundOpacity) | del((.plugins[] | select(.id=="animated.dock")).matchBarOpacity)' \
+      || exit 1
+    echo "matchbar-opacity: off (taskbar returns to its normal opacity)"
+  fi
+}
+
+# Set just the taskbar's background opacity. Used while the sync toggle is on
+  # and the dock's background-opacity slider moves. Accepts a fraction (0.35)
+  # or a percentage (40); the bar turns percentages into fractions.
+  cmd_bar_opacity() {
+    local value=$1
+    [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+      || die "usage: omarchy-dock-config bar-opacity <fraction-or-percent>"
+    apply_bar '(.bar.backgroundOpacity = $o)' --argjson o "$value" || exit 1
+    echo "bar-opacity: $value"
+  }
+
 if [[ $# -gt 0 ]]; then
   case $1 in
     pin)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_pin "${1:-}" "${2:-}" ;;
@@ -229,6 +299,8 @@ if [[ $# -gt 0 ]]; then
     set-item) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set_item "${1:-}" "${2:-}" ;;
     add)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_add "${1:-}" "${2:-}" ;;
     set)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set "${1:-}" "${2:-}" ;;
+    bar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_opacity "${1:-}" ;;
+    matchbar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_opacity "${1:-}" ;;
     state)    cmd_state ;;
     -h | --help | help)
       cat <<'EOF'
@@ -244,6 +316,8 @@ and the shell hot-reloads the change on save.
   set-item <index> <json>  replace a pinned item wholesale
   add <json> [index]     append (or insert) a raw item object
   set <key> <json>       set a dock-level setting; "null" deletes a key
+  bar-opacity <fraction-or-percent>  set the taskbar's background opacity
+  matchbar-opacity <true|false>  sync the taskbar's opacity with the dock's
   state                  print the plugin's entry
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
@@ -251,7 +325,7 @@ magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
 tiles, tileRadius, tileInset, tileOpacity, border, borderOpacity, cornerRadius,
 cornerShape, autohide, dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
 hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
-tintRunning, monochrome, glyphColor, fullWidth, edgeGap, items.
+tintRunning, monochrome, glyphColor, matchBarOpacity, fullWidth, edgeGap, items.
 
 Item forms in items[]:
   { "desktop": "kitty" }                  launch a desktop entry

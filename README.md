@@ -77,6 +77,7 @@ Settings on the plugin entry:
 | `animation` | Reflow animation length, ms (default 110) |
 | `spacing`, `padding` | In the card |
 | `backgroundOpacity` | Card opacity (0–1) |
+| `matchBarOpacity` | Sync the taskbar background opacity to `backgroundOpacity` (default `false`); needs the bar to read `bar.backgroundOpacity` |
 | `glyphScale` | Nerd Font glyph ink as a fraction of the slot |
 | `tiles`, `tileRadius`, `tileInset`, `tileOpacity` | Draw items as themed tiles |
 | `border`, `cornerRadius` | Card chrome |

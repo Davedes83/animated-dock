@@ -249,6 +249,21 @@ PopupWindow {
         onClicked: settings.dock.applySetting("border", String(!settings.dock.flag("border", true)))
       }
 
+      Toggle {
+        id: matchBarOpacityToggle
+        width: settings.contentWidth
+        label: "Sync taskbar opacity"
+        description: "Make the taskbar's background as opaque as the dock's."
+        checked: settings.dock.flag("matchBarOpacity", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: {
+          var next = !settings.dock.flag("matchBarOpacity", false)
+          Util.execDetached(settings.dock.configCmd
+            + " matchbar-opacity " + (next ? "true" : "false"))
+        }
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.xs
@@ -412,6 +427,7 @@ PopupWindow {
           knobColor: Color.accent
           onReleased: function(v) {
             settings.dock.applySetting("backgroundOpacity", String(v / 100))
+            settings.dock.syncBarOpacity(v / 100)
           }
         }
       }
