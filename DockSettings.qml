@@ -9,10 +9,12 @@ import qs.Ui
 // right-click "Settings" row. Anchored exactly like the context menu and
 // held open the same way: a HyprlandFocusGrab routes input to the window
 // and the dock, so clicking anywhere else clears the grab and the popup
-// closes. Every control writes through the bundled configurator (the `set`
-// subcommand or the atomic `opacity` / `corner-shape` / `glow`-family pushes
-// that mirror the taskbar in the same write), and the shell hot-reloads
-// shell.json on save, so changes land live.
+// closes. Controls are grouped under five uppercase section headers —
+// Appearance, Glow, Behaviour, Taskbar sync, Support — each toggle sitting
+// with its dependent control. Every control writes through the bundled
+// configurator (the `set` subcommand or the atomic `opacity` /
+// `corner-shape` / `glow`-family pushes that mirror the taskbar in the same
+// write), and the shell hot-reloads shell.json on save, so changes land live.
 PopupWindow {
   id: settings
 
