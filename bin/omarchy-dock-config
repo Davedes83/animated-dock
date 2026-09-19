@@ -3,9 +3,10 @@
 # Configurator for the animated.dock shell plugin.
 #
 # Everything it writes lands in the plugin's entry in shell.json, which the
-# Omarchy shell re-reads on save — so every change here shows up on the dock
-# immediately, with no restart. (Only edits to the plugin's own QML files
-# need `omarchy restart shell`; nothing here touches those.)
+# Omarchy shell re-reads on save — so most changes here show up on the dock
+# immediately. The exceptions: ensure-bar patches a *user-owned* taskbar
+# clone's Bar.qml, and installing that support once needs a shell restart
+# (done automatically the first time the sync setting is used).
 #
 # The dock drives shell.json through the non-interactive subcommands
 # (pin / unpin / move) rather than writing QML-side, so the staged-tempfile
@@ -254,15 +255,154 @@ apply_bar() {
   mv "$tmp" "$CFG"
 }
 
+# -------------------------------------------------------------- bar installer
+
+# The dock's "Sync taskbar opacity" setting writes bar.backgroundOpacity to
+# shell.json, but only a taskbar that reads that key reacts. Stock omarchy.bar
+# ignores it, so making support automatic means: ensure_bar_supported() makes
+# the *active* taskbar support it, once, idempotently —
+#   - nothing to do if the active bar already has setBackgroundOpacity();
+#   - otherwise it clones the stock bar (or re-activates the user's existing
+#     clone) exactly like `omarchy plugin clone`, then patches the user-owned
+#     Bar.qml with the anchored edits below.
+# Any on-disk change sets BAR_INSTALLED=1 so the caller can restart the shell
+# once: the freshly patched bar only loads on restart.
+
+PLUGINS_DIR="$HOME/.config/omarchy/plugins"
+OMARCHY_BIN="${OMARCHY_BIN:-omarchy}"
+BAR_INSTALLED=0
+
+# Add backgroundOpacity support to a copied (user-owned) bar's Bar.qml.
+# Anchored on exact stock lines, each of which must appear exactly once, or we
+# refuse to touch the file: a differently-shaped future bar should fail loudly
+# here rather than corrupt the user's own copy. Idempotent, writes a .bak, and
+# re-checks the resulting file before replacing the original.
+patch_bar() {
+  local qml=$1
+  python3 - "$qml" <<'PY' >/dev/null || die "could not patch $qml — see the python3 error above"
+import shutil, sys
+
+p = sys.argv[1]
+src = open(p, encoding="utf-8").read()
+if "function setBackgroundOpacity" in src:
+    sys.exit(0)  # already supported
+
+prop_anchor = "  property bool transparent: false"
+call_anchor = "    setRequestedTransparency(config.transparent === true)"
+fn_anchor = "  function restoreForegroundAnimation()"
+color_anchor = 'color: root.transparent ? "transparent" : root.background'
+color_next = "    surfaceFormat.opaque: false"
+color_pair = color_anchor + "\n" + color_next
+
+
+def once(anchor, label):
+    n = src.count(anchor)
+    if n != 1:
+        print(f"patch_bar: {label} anchor not found exactly once (count={n}) —"
+              " this bar version is not supported", file=sys.stderr)
+        sys.exit(1)
+
+
+once(prop_anchor, "transparent-property")
+once(call_anchor, "setRequestedTransparency-call")
+once(fn_anchor, "restoreForegroundAnimation-function")
+if src.count(color_pair) != 1:
+    print("patch_bar: main taskbar background line not found exactly once —"
+          " this bar version is not supported", file=sys.stderr)
+    sys.exit(1)
+
+shutil.copy2(p, p + ".bak")
+
+prop = ("\n"
+        "  // Bar background translucency, driven by `bar.backgroundOpacity` in\n"
+        "  // shell.json (0\u20131, or a percentage above 1). Missing/invalid = 1.0\n"
+        "  // (the normal opaque bar). The dock's \"Sync taskbar opacity\" setting\n"
+        "  // writes this key. Independent of `transparent`, which hard-overrides\n"
+        "  // the surface to fully transparent.\n"
+        "  property real backgroundOpacity: 1.0")
+i = src.index(prop_anchor) + len(prop_anchor)
+src = src[:i] + prop + src[i:]
+
+j = src.index(call_anchor) + len(call_anchor)
+src = src[:j] + "\n    root.setBackgroundOpacity(config.backgroundOpacity)" + src[j:]
+
+fn = ("  function setBackgroundOpacity(value) {\n"
+      "    var n = Number(value)\n"
+      "    if (!isFinite(n) || n < 0) {\n"
+      "      root.backgroundOpacity = 1.0\n"
+      "      return\n"
+      "    }\n"
+      "    if (n > 1) n = n / 100\n"
+      "    root.backgroundOpacity = Math.min(1, n)\n"
+      "  }\n\n")
+k = src.index(fn_anchor)
+src = src[:k] + fn + src[k:]
+
+src = src.replace(
+    color_pair,
+    'color: root.transparent ? "transparent" : Util.alpha(root.background, root.backgroundOpacity)\n'
+    + color_next,
+    1,
+)
+
+if src.count("{") != src.count("}"):
+    print("patch_bar: brace balance broken after edit", file=sys.stderr)
+    sys.exit(1)
+
+open(p, "w", encoding="utf-8").write(src)
+PY
+  grep -q 'function setBackgroundOpacity' "$qml" \
+    || die "could not patch $qml — the edit did not land"
+}
+
+ensure_bar_supported() {
+  local bar_id dir clone_id
+  BAR_INSTALLED=0
+  bar_id=$(jq -r '.bar.id // "omarchy.bar"' "$CFG" 2>/dev/null)
+
+  # Stock bar -> clone it into plugins/<user>.bar and switch to it. Bringing
+  # the shipped CLI in keeps names, manifests and activation canonical.
+  if [[ $bar_id == "omarchy.bar" ]]; then
+    clone_id="${USER:-$(id -un)}.bar"
+    if [[ -d $PLUGINS_DIR/$clone_id ]]; then
+      require omarchy-shell
+      omarchy-shell shell enablePlugin "$clone_id" "" >/dev/null 2>&1 \
+        || die "could not activate the cloned taskbar '$clone_id'"
+    else
+      require "$OMARCHY_BIN"
+      "$OMARCHY_BIN" plugin clone omarchy.bar >/dev/null 2>&1 \
+        || die "could not clone the taskbar; run manually: omarchy plugin clone omarchy.bar"
+    fi
+    bar_id=$clone_id
+    BAR_INSTALLED=1
+  fi
+
+  dir="$PLUGINS_DIR/$bar_id"
+  [[ -f $dir/Bar.qml ]] || die "taskbar '$bar_id' has no Bar.qml at $dir"
+
+  grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" && return 0
+  patch_bar "$dir/Bar.qml"
+  BAR_INSTALLED=1
+}
+
+# The shell.json write (apply_bar, above) happens *before* any restart, so a
+# single restart picks up the patched bar and the setting at the same time.
+restart_shell_after_install() {
+  require "$OMARCHY_BIN"
+  omarchy-notification-send -g "󰍝" "Sync taskbar opacity" "$1" >/dev/null 2>&1 || true
+  "$OMARCHY_BIN" restart shell >/dev/null 2>&1 || true
+}
+
 # Toggle "Sync taskbar opacity": on -> the taskbar background opacity tracks
 # the dock's own backgroundOpacity (written as bar.backgroundOpacity in
 # shell.json); off -> the taskbar returns to its normal opaque background.
 cmd_matchbar_opacity() {
-  local on=$1
+  local on=$1 current
   [[ $on == "true" || $on == "false" ]] \
     || die "usage: omarchy-dock-config matchbar-opacity <true|false>"
 
-  local current
+  ensure_bar_supported
+
   current=$(jq -r "$DOCK.backgroundOpacity // 1.0" "$CFG" 2>/dev/null)
   if [[ -z $current || $current == "null" ]]; then current=1.0; fi
 
@@ -271,25 +411,49 @@ cmd_matchbar_opacity() {
       '(.bar.backgroundOpacity = $o) | (.plugins[] | select(.id=="animated.dock")).matchBarOpacity = true' \
       --argjson o "$current" \
       || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it."
+    fi
     echo "matchbar-opacity: on (bar.backgroundOpacity = $current)"
   else
     apply_bar \
       'del(.bar.backgroundOpacity) | del((.plugins[] | select(.id=="animated.dock")).matchBarOpacity)' \
       || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it."
+    fi
     echo "matchbar-opacity: off (taskbar returns to its normal opacity)"
   fi
 }
 
 # Set just the taskbar's background opacity. Used while the sync toggle is on
-  # and the dock's background-opacity slider moves. Accepts a fraction (0.35)
-  # or a percentage (40); the bar turns percentages into fractions.
-  cmd_bar_opacity() {
-    local value=$1
-    [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
-      || die "usage: omarchy-dock-config bar-opacity <fraction-or-percent>"
-    apply_bar '(.bar.backgroundOpacity = $o)' --argjson o "$value" || exit 1
-    echo "bar-opacity: $value"
-  }
+# and the dock's background-opacity slider moves. Accepts a fraction (0.35)
+# or a percentage (40); the bar turns percentages into fractions.
+cmd_bar_opacity() {
+  local value=$1
+  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+    || die "usage: omarchy-dock-config bar-opacity <fraction-or-percent>"
+
+  ensure_bar_supported
+  apply_bar '(.bar.backgroundOpacity = $o)' --argjson o "$value" || exit 1
+  if (( BAR_INSTALLED )); then
+    restart_shell_after_install "Taskbar opacity support installed — restarting to apply it."
+  fi
+  echo "bar-opacity: $value"
+}
+
+# Make sure the active taskbar understands bar.backgroundOpacity and restart
+# when it was just enabled. Idempotent; touches nothing when support is there.
+cmd_ensure_bar() {
+  ensure_bar_supported
+  local bar_id
+  bar_id=$(jq -r '.bar.id // "omarchy.bar"' "$CFG")
+  if (( BAR_INSTALLED )); then
+    restart_shell_after_install "Taskbar opacity support was just installed for '$bar_id'."
+  else
+    echo "ensure-bar: taskbar '$bar_id' already supports backgroundOpacity — nothing to do."
+  fi
+}
 
 if [[ $# -gt 0 ]]; then
   case $1 in
@@ -301,6 +465,7 @@ if [[ $# -gt 0 ]]; then
     set)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set "${1:-}" "${2:-}" ;;
     bar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_opacity "${1:-}" ;;
     matchbar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_opacity "${1:-}" ;;
+    ensure-bar) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_ensure_bar ;;
     state)    cmd_state ;;
     -h | --help | help)
       cat <<'EOF'
@@ -318,7 +483,14 @@ and the shell hot-reloads the change on save.
   set <key> <json>       set a dock-level setting; "null" deletes a key
   bar-opacity <fraction-or-percent>  set the taskbar's background opacity
   matchbar-opacity <true|false>  sync the taskbar's opacity with the dock's
+  ensure-bar                 install taskbar backgroundOpacity support (idempotent)
   state                  print the plugin's entry
+
+The first time "Sync taskbar opacity" (or bar-opacity) runs, ensure-bar
+installs the small taskbar support the dock needs and restarts the shell
+once; after that all three commands are instant. The bar's Bar.qml is only
+touched when it is an unsupported user-owned copy (stock omarchy.bar is
+first cloned into your plugins, exactly like `omarchy plugin clone`).
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
 magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
