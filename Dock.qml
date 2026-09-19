@@ -220,10 +220,13 @@ Item {
   // the halo is weighted: "full" shows it evenly all round, "bottom" pushes
   // the extra bloom onto the side of the border that faces the screen edge —
   // an underglow look for a dock, strongest at the docked edge, normal up
-  // top. Off by default.
+  // top — and "top" shifts it the other way. Off by default.
   readonly property bool glowEnabled: flag("glow", false)
   readonly property real glowStrength: fraction("glowAmount", 0.5)
-  readonly property bool glowBottomHeavy: String(config.glowFocus || "") === "bottom"
+  // "bottom" pushes the halo toward the docked edge (the underglow look),
+  // "top" toward the opposite side; anything else keeps it evenly all round.
+  readonly property real glowShift: String(config.glowFocus || "") === "bottom" ? 1
+    : String(config.glowFocus || "") === "top" ? -1 : 0
   readonly property color glowColor: Border.color(
     Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2))))
   // How far past the card the halo may bloom; the window reserves this much
@@ -237,8 +240,6 @@ Item {
   // Inward room on the cross axis (the side that faces the desktop). The
   // docked-edge side already has the edge strip to glow across.
   readonly property int glowCrossExtra: glowRoom
-  // Pixels the bottom-emphasis ring stack slides toward the docked edge.
-  readonly property real glowShift: glowBottomHeavy ? 1 : 0
   readonly property real glowShiftX: vertical ? (edge === "right" ? glowShift : -glowShift) : 0
   readonly property real glowShiftY: vertical ? 0 : (edge === "bottom" ? glowShift : -glowShift)
 

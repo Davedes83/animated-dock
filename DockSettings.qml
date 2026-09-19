@@ -10,9 +10,9 @@ import qs.Ui
 // held open the same way: a HyprlandFocusGrab routes input to the window
 // and the dock, so clicking anywhere else clears the grab and the popup
 // closes. Every control writes through the bundled configurator (the `set`
-// subcommand or the atomic `opacity` / `corner-shape` pushes that mirror the
-// taskbar in the same write), and the shell hot-reloads shell.json on save,
-// so changes land live.
+// subcommand or the atomic `opacity` / `corner-shape` / `glow`-family pushes
+// that mirror the taskbar in the same write), and the shell hot-reloads
+// shell.json on save, so changes land live.
 PopupWindow {
   id: settings
 
@@ -280,6 +280,21 @@ PopupWindow {
         }
       }
 
+      Toggle {
+        id: matchBarGlowToggle
+        width: settings.contentWidth
+        label: "Sync taskbar glow"
+        description: "Give the taskbar the dock's border glow."
+        checked: settings.dock.flag("matchBarGlow", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: {
+          var next = !settings.dock.flag("matchBarGlow", false)
+          Util.execDetached(settings.dock.configCmd
+            + " matchbar-glow " + (next ? "true" : "false"))
+        }
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.xs
@@ -329,7 +344,11 @@ PopupWindow {
         checked: settings.dock.flag("glow", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("glow", String(!settings.dock.flag("glow", false)))
+        onClicked: {
+          var next = !settings.dock.flag("glow", false)
+          Util.execDetached(settings.dock.configCmd
+            + " glow " + (next ? "true" : "false"))
+        }
       }
 
       Column {
@@ -373,8 +392,8 @@ PopupWindow {
             fillColor: Color.accent
             knobColor: Color.accent
             onReleased: function(v) {
-              settings.dock.applySetting("glowAmount", String(v / 100))
-            }
+            Util.execDetached(settings.dock.configCmd + " glow-amount " + Util.shellQuote(String(v / 100)))
+          }
           }
         }
 
@@ -393,14 +412,18 @@ PopupWindow {
           ButtonGroup {
             options: [
               { value: "full", label: "Full" },
+              { value: "top", label: "Top" },
               { value: "bottom", label: "Bottom" }
             ]
-            value: String(settings.dock.config.glowFocus || "") === "bottom" ? "bottom" : "full"
+            value: {
+              var focus = String(settings.dock.config.glowFocus || "")
+              return (focus === "bottom" || focus === "top") ? focus : "full"
+            }
             foreground: Color.popups.text
             background: Color.popups.background
             accent: Color.accent
             onChanged: function(v) {
-              settings.dock.applySetting("glowFocus", JSON.stringify(String(v)))
+              Util.execDetached(settings.dock.configCmd + " glow-focus " + Util.shellQuote(String(v)))
             }
           }
         }

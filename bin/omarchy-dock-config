@@ -258,12 +258,13 @@ apply_bar() {
 # -------------------------------------------------------------- bar installer
 
 # The dock's taskbar-sync settings ("Sync taskbar opacity" / "Sync taskbar
-# corners") write bar.backgroundOpacity and bar.cornerShape/bar.cornerRadius
+# corners" / "Sync taskbar glow") write bar.backgroundOpacity,
+# bar.cornerShape/bar.cornerRadius and bar.glow/bar.glowAmount/bar.glowFocus
 # to shell.json, but only a taskbar that reads those reacts. Stock omarchy.bar
 # ignores them, so making support automatic means: ensure_bar_supported()
 # makes the *active* taskbar support them, once, idempotently —
-#   - nothing to do if the active bar already understands both (has the
-#     setBackgroundOpacity() and setBarCorners() functions);
+#   - nothing to do if the active bar already understands all of them (has the
+#     setBackgroundOpacity(), setBarCorners() and setBarGlow() functions);
 #   - otherwise it clones the stock bar (or re-activates the user's existing
 #     clone) exactly like `omarchy plugin clone`, then patches the user-owned
 #     Bar.qml with the anchored edits below (per-feature; an older patched bar
@@ -275,13 +276,14 @@ PLUGINS_DIR="$HOME/.config/omarchy/plugins"
 OMARCHY_BIN="${OMARCHY_BIN:-omarchy}"
 BAR_INSTALLED=0
 
-# Add backgroundOpacity and corner-shape support to a copied (user-owned)
-# bar's Bar.qml. Anchored on exact stock lines, each of which must appear
-# exactly once, or we refuse to touch the file: a differently-shaped future
-# bar should fail loudly here rather than corrupt the user's own copy.
-# Per-feature and idempotent — each edit is skipped when its guard marker
-# function is already present, so an older patched bar just backfills the
-# missing piece. Writes a .bak and re-checks the file before replacing it.
+# Add backgroundOpacity, corner-shape and border-glow support to a copied
+# (user-owned) bar's Bar.qml. Anchored on exact stock lines, each of which
+# must appear exactly once, or we refuse to touch the file: a
+# differently-shaped future bar should fail loudly here rather than corrupt
+# the user's own copy. Per-feature and idempotent — each edit is skipped when
+# its guard marker function is already present, so an older patched bar just
+# backfills the missing piece. Writes a .bak and re-checks the file before
+# replacing it.
 patch_bar() {
   local qml=$1
   python3 - "$qml" <<'PY' >/dev/null || die "could not patch $qml — see the python3 error above"
@@ -295,9 +297,7 @@ def patched(marker):
 
 wants_opacity = not patched("function setBackgroundOpacity")
 wants_corners = not patched("function setBarCorners")
-
-if not (wants_opacity or wants_corners):
-    sys.exit(0)  # fully supported already
+wants_glow = not patched("function setBarGlow")
 
 prop_anchor = "  property bool transparent: false"
 call_anchor = "    setRequestedTransparency(config.transparent === true)"
@@ -313,6 +313,10 @@ def once(anchor, label):
         print(f"patch_bar: {label} anchor not found exactly once (count={n}) —"
               " this bar version is not supported", file=sys.stderr)
         sys.exit(1)
+
+
+if not (wants_opacity or wants_corners or wants_glow):
+    sys.exit(0)  # fully supported already
 
 
 if wants_opacity:
@@ -414,6 +418,175 @@ if wants_corners:
         1,
     )
 
+# Glow anchors refer to content introduced by the corners edits above (the
+# transparent window + barBackgroundSurface), so they are verified (and
+# applied) *after* those edits land.
+if wants_glow:
+    once("  property real barCornerRadius: 0", "barCornerRadius-property")
+    once("    root.setBarCorners(config.cornerShape, config.cornerRadius)", "setBarCorners-call")
+    once(fn_anchor, "restoreForegroundAnimation-function")
+
+    glow_prop = ("\n"
+                 "  // Taskbar border glow, driven by `bar.glow`, `bar.glowAmount` and\n"
+                 "  // `bar.glowFocus` in shell.json. The same 4-stroke halo the dock\n"
+                 "  // paints behind its card, drawn here behind the background surface.\n"
+                 "  // While enabled the window reserves barGlowRoom on the\n"
+                 "  // desktop-facing side so the bloom is not clipped; the docked edge\n"
+                 "  // sits flush at the screen edge and clips there, like the dock card\n"
+                 "  // does on its docked side. The dock's \"Sync taskbar glow\" setting\n"
+                 "  // writes these keys.\n"
+                 "  property bool barGlowEnabled: false\n"
+                 "  property real barGlowAmount: 0.5\n"
+                 "  property string barGlowFocus: \"full\"\n"
+                 "  readonly property color barGlowColor: Border.color(\n"
+                 "    Border.surfaceSpec(\"popups\", \"border\", Color.popups.border, Math.max(1, Style.space(2))))\n"
+                 "  readonly property int barGlowRoom: barGlowEnabled ? Math.max(1, Style.space(6)) : 0\n"
+                 "  // Focus slides the ring stack one pixel toward the emphasized edge.\n"
+                 "  // For a top-position bar \"bottom\" blooms into the reserved room\n"
+                 "  // (the desktop-facing underglow); \"top\" pushes at the flush\n"
+                 "  // screen edge, so it mostly clips there.\n"
+                 "  readonly property real barGlowShiftX: 0\n"
+                 "  readonly property real barGlowShiftY: root.vertical ? 0\n"
+                 "    : (root.barGlowFocus === \"bottom\" ? 1 : root.barGlowFocus === \"top\" ? -1 : 0)\n")
+    i = src.index("  property real barCornerRadius: 0") + len("  property real barCornerRadius: 0")
+    src = src[:i] + glow_prop + src[i:]
+
+    j = src.index("    root.setBarCorners(config.cornerShape, config.cornerRadius)") \
+        + len("    root.setBarCorners(config.cornerShape, config.cornerRadius)")
+    src = src[:j] + "\n    root.setBarGlow(config.glow, config.glowAmount, config.glowFocus)" + src[j:]
+
+    fn = ("  function setBarGlow(enabled, amount, focus) {\n"
+          "    root.barGlowEnabled = enabled === true\n"
+          "    var n = Number(amount)\n"
+          "    if (!isFinite(n) || n < 0) {\n"
+          "      root.barGlowAmount = 0.5\n"
+          "    } else {\n"
+          "      if (n > 1) n = n / 100\n"
+          "      root.barGlowAmount = Math.min(1, n)\n"
+          "    }\n"
+          "    var f = String(focus || \"\").toLowerCase()\n"
+          "    root.barGlowFocus = (f === \"top\" || f === \"bottom\") ? f : \"full\"\n"
+          "  }\n\n")
+    k = src.index(fn_anchor)
+    src = src[:k] + fn + src[k:]
+
+    # The halo blooms past the 30px surface, so while it is enabled the window
+    # grows barGlowRoom on the desktop-facing side (the docked edge is pinned
+    # flush and its side of the bloom clips at the screen edge). Content stays
+    # barSize tall by pinning the surface host to the docked edge. The autohide
+    # park distance is bumped by the same amount so hiding still clears the
+    # whole (taller) window.
+    m = src.count("? -root.barSize : 0")
+    if m != 4:
+        print(f"patch_bar: bar-hide margins not found exactly four times (count={m}) —"
+              " this bar version is not supported", file=sys.stderr)
+        sys.exit(1)
+    src = src.replace("? -root.barSize : 0", "? -(root.barSize + root.barGlowRoom) : 0")
+
+    old_implicit_w = "    implicitWidth: root.vertical ? root.barSize : 0"
+    old_implicit_h = "    implicitHeight: root.vertical ? 0 : root.barSize"
+    once(old_implicit_w, "implicitWidth-line")
+    once(old_implicit_h, "implicitHeight-line")
+    src = src.replace(old_implicit_w, "    implicitWidth: root.vertical ? root.barSize + root.barGlowRoom : 0", 1)
+    src = src.replace(old_implicit_h, "    implicitHeight: root.vertical ? 0 : root.barSize + root.barGlowRoom", 1)
+
+    surface_block = ("    // The surface is transparent; this shape paints the real background so\n"
+                     "    // it can be rounded. Same color/opacity expression as the old window\n"
+                     "    // color, radius from setBarCorners() (0 keeps the plain rectangle).\n"
+                     "    Rectangle {\n"
+                     "      id: barBackgroundSurface\n"
+                     "      anchors.fill: parent\n"
+                     "      color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
+                     "      radius: root.barCornerRadius\n"
+                     "    }\n"
+                     "\n"
+                     "    WlrLayershell.namespace: \"omarchy-bar\"\n"
+                     "    WlrLayershell.layer: WlrLayer.Top\n"
+                     "\n"
+                     "    Loader {\n"
+                     "      anchors.fill: parent\n"
+                     "      sourceComponent: root.vertical ? verticalBar : horizontalBar\n"
+                     "\n"
+                     "      // A child of the loader, not a sibling of the sections: an ancestor stays\n"
+                     "      // hovered while the pointer is over a widget, where a sibling would lose\n"
+                     "      // hover to the section the pointer entered.\n"
+                     "      HoverHandler {\n"
+                     "        onHoveredChanged: root.setBarHovered(hovered)\n"
+                     "        // Unplugging a monitor destroys its bar without a leave event, which\n"
+                     "        // would strand this surface's tally and hold the peek open for good.\n"
+                     "        Component.onDestruction: if (hovered) root.setBarHovered(false)\n"
+                     "      }\n"
+                     "    }\n")
+    once(surface_block, "bar-surface+loader block")
+
+    glowing_block = ("    // The surface is transparent; this shape paints the real background so\n"
+                     "    // it can be rounded. Same color/opacity expression as the old window\n"
+                     "    // color, radius from setBarCorners() (0 keeps the plain rectangle). The\n"
+                     "    // content lives in barSurfaceHost, pinned to the docked edge, so it\n"
+                     "    // stays barSize tall while the window grows the barGlowRoom reserve on\n"
+                     "    // the desktop-facing side for the glow bloom.\n"
+                     "    WlrLayershell.namespace: \"omarchy-bar\"\n"
+                     "    WlrLayershell.layer: WlrLayer.Top\n"
+                     "\n"
+                     "    Item {\n"
+                     "      id: barSurfaceHost\n"
+                     "      x: root.vertical ? (root.position === \"right\" ? parent.width - root.barSize : 0) : 0\n"
+                     "      y: root.vertical ? 0 : (root.position === \"bottom\" ? parent.height - root.barSize : 0)\n"
+                     "      width: root.vertical ? root.barSize : parent.width\n"
+                     "      height: root.vertical ? parent.height : root.barSize\n"
+                     "\n"
+                     "      Rectangle {\n"
+                     "        id: barBackgroundSurface\n"
+                     "        anchors.fill: parent\n"
+                     "        color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
+                     "        radius: root.barCornerRadius\n"
+                     "      }\n"
+                     "\n"
+                     "      // Border glow. The same plain translucent ring strokes the dock paints\n"
+                     "      // behind its card, drawn behind this surface so the light reads as\n"
+                     "      // coming off the bar's outline. barGlowFocus nudges the stack one\n"
+                     "      // pixel toward the emphasized edge; the docked-edge side clips at the\n"
+                     "      // screen edge like the dock card's own glow does.\n"
+                     "      Item {\n"
+                     "        id: barGlow\n"
+                     "        anchors.fill: parent\n"
+                     "        z: -1\n"
+                     "        visible: root.barGlowEnabled\n"
+                     "        Repeater {\n"
+                     "          model: [0, 1, 2, 3]\n"
+                     "          Rectangle {\n"
+                     "            required property int index\n"
+                     "            readonly property int step: modelData\n"
+                     "            x: -1 - step + root.barGlowShiftX\n"
+                     "            y: -1 - step + root.barGlowShiftY\n"
+                     "            width: parent.width + (2 + step * 2)\n"
+                     "            height: parent.height + (2 + step * 2)\n"
+                     "            radius: Math.max(0, root.barCornerRadius + 1 + step)\n"
+                     "            color: \"transparent\"\n"
+                     "            border.width: 2\n"
+                     "            border.color: Util.alpha(root.barGlowColor,\n"
+                     "              root.barGlowAmount * [0.50, 0.32, 0.18, 0.10][step])\n"
+                     "          }\n"
+                     "        }\n"
+                     "      }\n"
+                     "\n"
+                     "      Loader {\n"
+                     "        anchors.fill: parent\n"
+                     "        sourceComponent: root.vertical ? verticalBar : horizontalBar\n"
+                     "\n"
+                     "        // A child of the loader, not a sibling of the sections: an ancestor stays\n"
+                     "        // hovered while the pointer is over a widget, where a sibling would lose\n"
+                     "        // hover to the section the pointer entered.\n"
+                     "        HoverHandler {\n"
+                     "          onHoveredChanged: root.setBarHovered(hovered)\n"
+                     "          // Unplugging a monitor destroys its bar without a leave event, which\n"
+                     "          // would strand this surface's tally and hold the peek open for good.\n"
+                     "          Component.onDestruction: if (hovered) root.setBarHovered(false)\n"
+                     "        }\n"
+                     "      }\n"
+                     "    }\n")
+    src = src.replace(surface_block, glowing_block, 1)
+
 if src.count("{") != src.count("}"):
     print("patch_bar: brace balance broken after edit", file=sys.stderr)
     sys.exit(1)
@@ -423,6 +596,7 @@ open(p, "w", encoding="utf-8").write(src)
 PY
   grep -q 'function setBackgroundOpacity' "$qml" \
     && grep -q 'function setBarCorners' "$qml" \
+    && grep -q 'function setBarGlow' "$qml" \
     || die "could not patch $qml — the edits did not land"
 }
 
@@ -452,7 +626,8 @@ ensure_bar_supported() {
   [[ -f $dir/Bar.qml ]] || die "taskbar '$bar_id' has no Bar.qml at $dir"
 
   grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" \
-    && grep -q 'function setBarCorners' "$dir/Bar.qml" && return 0
+    && grep -q 'function setBarCorners' "$dir/Bar.qml" \
+    && grep -q 'function setBarGlow' "$dir/Bar.qml" && return 0
   patch_bar "$dir/Bar.qml"
   BAR_INSTALLED=1
 }
@@ -657,6 +832,125 @@ cmd_corner_shape() {
   fi
 }
 
+# Toggle "Sync taskbar glow": on -> the taskbar gets the dock's border glow
+# (bar.glow / bar.glowAmount / bar.glowFocus written in one atomic write from
+# the dock's current values, plus the flag); off -> the taskbar returns to its
+# plain border.
+cmd_matchbar_glow() {
+  local on=$1
+  [[ $on == "true" || $on == "false" ]] \
+    || die "usage: omarchy-dock-config matchbar-glow <true|false>"
+
+  ensure_bar_supported
+
+  if [[ $on == "true" ]]; then
+    local glow amt focus
+    glow=$(jq -r "$DOCK.glow // false" "$CFG" 2>/dev/null)
+    [[ $glow == "true" ]] || glow="false"
+    amt=$(jq -r "$DOCK.glowAmount // 0.5" "$CFG" 2>/dev/null)
+    [[ $amt =~ ^[0-9]+(\.[0-9]+)?$ ]] || amt=0.5
+    focus=$(jq -r "$DOCK.glowFocus // \"full\"" "$CFG" 2>/dev/null)
+    case "$focus" in top|bottom) ;; *) focus="full" ;; esac
+    apply_bar \
+      '(.bar.glow = $g) | (.bar.glowAmount = $a) | (.bar.glowFocus = $f) | (.plugins[] | select(.id=="animated.dock")).matchBarGlow = true' \
+      --argjson g "$glow" --argjson a "$amt" --arg f "$focus" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
+    fi
+    echo "matchbar-glow: on (bar.glow = $glow, bar.glowAmount = $amt, bar.glowFocus = $focus)"
+  else
+    apply_bar \
+      'del(.bar.glow) | del(.bar.glowAmount) | del(.bar.glowFocus) | del((.plugins[] | select(.id=="animated.dock")).matchBarGlow)' \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
+    fi
+    echo "matchbar-glow: off (taskbar returns to its plain border)"
+  fi
+}
+
+# Set the dock's border-glow flag, atomically mirroring it onto the taskbar
+# (bar.glow) in the *same* write when "Sync taskbar glow" is on. This is the
+# settings popup's Border glow toggle.
+cmd_glow() {
+  local on=$1 sync
+  [[ $on == "true" || $on == "false" ]] \
+    || die "usage: omarchy-dock-config glow <true|false>"
+
+  sync=$(jq -r "$DOCK.matchBarGlow // false" "$CFG" 2>/dev/null)
+  [[ $sync == "true" ]] && ensure_bar_supported
+
+  if [[ $sync == "true" ]]; then
+    apply_bar \
+      '(.plugins[] | select(.id=="animated.dock")).glow = $g | .bar.glow = $g' \
+      --argjson g "$on" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
+    fi
+    echo "glow: $on (taskbar mirrored)"
+  else
+    apply ".glow = \$g" --argjson g "$on" || exit 1
+    echo "glow: $on"
+  fi
+}
+
+# Set the dock's glow strength, atomically mirroring it onto the taskbar
+# (bar.glowAmount) when "Sync taskbar glow" is on. This is the settings
+# popup's Glow strength slider. Accepts a fraction (0.35) or a percentage
+# (60); the bar's setBarGlow() turns percentages into fractions.
+cmd_glow_amount() {
+  local value=$1 sync
+  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+    || die "usage: omarchy-dock-config glow-amount <fraction-or-percent>"
+
+  sync=$(jq -r "$DOCK.matchBarGlow // false" "$CFG" 2>/dev/null)
+  [[ $sync == "true" ]] && ensure_bar_supported
+
+  if [[ $sync == "true" ]]; then
+    apply_bar \
+      '(.plugins[] | select(.id=="animated.dock")).glowAmount = $a | .bar.glowAmount = $a' \
+      --argjson a "$value" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
+    fi
+    echo "glow-amount: $value (taskbar mirrored)"
+  else
+    apply ".glowAmount = \$a" --argjson a "$value" || exit 1
+    echo "glow-amount: $value"
+  fi
+}
+
+# Set the dock's glow focus, atomically mirroring it onto the taskbar
+# (bar.glowFocus) when "Sync taskbar glow" is on. This is the settings popup's
+# Glow focus picker (full all round, or top / bottom emphasis).
+cmd_glow_focus() {
+  local focus=$1 sync
+  case "$focus" in
+    full|top|bottom) ;;
+    *) die "usage: omarchy-dock-config glow-focus <full|top|bottom>" ;;
+  esac
+
+  sync=$(jq -r "$DOCK.matchBarGlow // false" "$CFG" 2>/dev/null)
+  [[ $sync == "true" ]] && ensure_bar_supported
+
+  if [[ $sync == "true" ]]; then
+    apply_bar \
+      '(.plugins[] | select(.id=="animated.dock")).glowFocus = $f | .bar.glowFocus = $f' \
+      --arg f "$focus" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
+    fi
+    echo "glow-focus: $focus (taskbar mirrored)"
+  else
+    apply ".glowFocus = \$f" --arg f "$focus" || exit 1
+    echo "glow-focus: $focus"
+  fi
+}
+
 # Make sure the active taskbar understands bar.backgroundOpacity and restart
 # when it was just enabled. Idempotent; touches nothing when support is there.
 cmd_ensure_bar() {
@@ -666,7 +960,7 @@ cmd_ensure_bar() {
   if (( BAR_INSTALLED )); then
     restart_shell_after_install "Taskbar sync support was just installed for '$bar_id'."
   else
-    echo "ensure-bar: taskbar '$bar_id' already supports backgroundOpacity and corners — nothing to do."
+    echo "ensure-bar: taskbar '$bar_id' already supports backgroundOpacity, corners and glow — nothing to do."
   fi
 }
 
@@ -684,6 +978,10 @@ if [[ $# -gt 0 ]]; then
     bar-corner) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_corner ;;
     corner-shape) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_corner_shape "${1:-}" ;;
     matchbar-corners) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_corners "${1:-}" ;;
+    glow)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow "${1:-}" ;;
+    glow-amount) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow_amount "${1:-}" ;;
+    glow-focus) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow_focus "${1:-}" ;;
+    matchbar-glow) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_glow "${1:-}" ;;
     ensure-bar) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_ensure_bar ;;
     state)    cmd_state ;;
     -h | --help | help)
@@ -708,21 +1006,31 @@ and the shell hot-reloads the change on save.
   corner-shape <square|pill|rounded>  set the dock's corner shape (also mirrors
                        the taskbar keys when "Sync taskbar corners" is on)
   matchbar-corners <true|false>  sync the taskbar's corners with the dock's
+  glow <true|false>        set the dock's border glow (also mirrors the taskbar
+                       when "Sync taskbar glow" is on)
+  glow-amount <fraction-or-percent>  set the dock's glow strength (also mirrors
+                       the taskbar when "Sync taskbar glow" is on)
+  glow-focus <full|top|bottom>  set the dock's glow emphasis (also mirrors the
+                       taskbar when "Sync taskbar glow" is on)
+  matchbar-glow <true|false>  sync the taskbar's glow with the dock's
   ensure-bar                 install taskbar sync support (idempotent)
   state                  print the plugin's entry
 
 The first time any sync setting runs, ensure-bar installs the small taskbar
-support the dock needs (backgroundOpacity + corner shape) and restarts the
-shell once; after that all these commands are instant. The bar's Bar.qml is
-only touched when it is an unsupported user-owned copy (stock omarchy.bar is
-first cloned into your plugins, exactly like `omarchy plugin clone`).
+support the dock needs (backgroundOpacity + corner shape + border glow) and
+restarts the shell once; after that all these commands are instant. The bar's
+Bar.qml is only touched when it is an unsupported user-owned copy (stock
+omarchy.bar is first cloned into your plugins, exactly like `omarchy plugin
+clone`).
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
 magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
 tiles, tileRadius, tileInset, tileOpacity, border, borderOpacity, cornerRadius,
-cornerShape, autohide, dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
+cornerShape, glow, glowAmount, glowFocus, autohide, dodge, pressure,
+revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
 hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
-tintRunning, monochrome, glyphColor, matchBarOpacity, matchBarCorners, fullWidth, edgeGap, items.
+tintRunning, monochrome, glyphColor, matchBarOpacity, matchBarCorners,
+matchBarGlow, fullWidth, edgeGap, items.
 
 Item forms in items[]:
   { "desktop": "kitty" }                  launch a desktop entry
