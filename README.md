@@ -80,6 +80,9 @@ Settings on the plugin entry:
 | `glyphScale` | Nerd Font glyph ink as a fraction of the slot |
 | `tiles`, `tileRadius`, `tileInset`, `tileOpacity` | Draw items as themed tiles |
 | `border`, `cornerRadius` | Card chrome |
+| `glow` | Border glow halo (default `false`) |
+| `glowAmount` | Glow strength, 0–1 (default 0.5) |
+| `glowFocus` | `"full"` (default) owns the border, or `"bottom"` pushes the bloom onto the screen-edge side |
 | `autohide` | `false` keeps the dock always visible (default true) |
 | `dodge` | Intelli-hide from overlapping / fullscreen windows (default true) |
 | `pressure` | Reveal delay collapses to zero on the edge hotspot (default true) |

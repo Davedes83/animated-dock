@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Hyprland
 import qs.Commons
@@ -86,12 +87,23 @@ PopupWindow {
   readonly property int contentWidth: Style.space(300)
   readonly property var settingsBorder: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
+  // The body scrolls inside a fixed cap, so adding rows later never makes
+  // the popup walk up off the screen. When the column fits the cap the box
+  // hugs it (no scrollbar); above it, the box stays put and the column
+  // scrolls. The cap tracks the monitor so a small screen still fits.
+  readonly property int bodyHeight: Math.min(column.implicitHeight, maxBodyHeight)
+  readonly property int maxBodyHeight: {
+    var m = settings.dock.monitorRect(settings.anchorWindowScreenName())
+    if (m) return Math.max(Style.space(280), Math.min(Style.space(620), Math.round(m.height) - Style.space(80)))
+    return Style.space(620)
+  }
+
   implicitWidth: contentWidth + pad * 2 + Border.left(settingsBorder) + Border.right(settingsBorder)
   // Pinned to the implicit width so a live value label ("42 px") can never
   // reflow the box. The dock window is frozen (resized to the slider's max)
   // while this popup is open, so nothing below ever re-sizes it.
   width: contentWidth + pad * 2 + Border.left(settingsBorder) + Border.right(settingsBorder)
-  implicitHeight: Math.round(column.implicitHeight + pad * 2 + Border.top(settingsBorder) + Border.bottom(settingsBorder))
+  implicitHeight: Math.round(settings.bodyHeight + pad * 2 + Border.top(settingsBorder) + Border.bottom(settingsBorder))
 
   HyprlandFocusGrab {
     active: settings.open
@@ -131,38 +143,47 @@ PopupWindow {
     color: Util.alpha(Color.popups.background, 0.97)
     borderSpec: settings.settingsBorder
 
-    Column {
-      id: column
+    ScrollView {
+      id: scroll
       x: Border.left(settings.settingsBorder) + settings.pad
       y: Border.top(settings.settingsBorder) + settings.pad
       width: settings.contentWidth
-      spacing: Style.spacing.lg
+      height: settings.bodyHeight
+      clip: true
+      contentWidth: availableWidth
+      ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+      ScrollBar.vertical.policy: column.implicitHeight > scroll.height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
 
-      Row {
-        width: settings.contentWidth
-        spacing: Style.spacing.md
+      Column {
+        id: column
+        width: scroll.availableWidth
+        spacing: Style.spacing.lg
 
-        Text {
-          width: settings.contentWidth - Style.space(40) - Style.spacing.md
-          anchors.verticalCenter: parent.verticalCenter
-          text: "Dock Settings"
-          color: Color.popups.text
-          font.family: Style.font.resolvedFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-          elide: Text.ElideRight
-        }
+        Row {
+          width: settings.contentWidth
+          spacing: Style.spacing.md
 
-        Button {
-          anchors.verticalCenter: parent.verticalCenter
-          iconText: "✕"
-          fontSize: Style.font.body
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
-          foreground: Color.popups.text
-          accent: Color.accent
-          onClicked: settings.close()
-        }
+          Text {
+            width: settings.contentWidth - Style.space(40) - Style.spacing.md
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Dock Settings"
+            color: Color.popups.text
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          Button {
+            anchors.verticalCenter: parent.verticalCenter
+            iconText: "✕"
+            fontSize: Style.font.body
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY
+            foreground: Color.popups.text
+            accent: Color.accent
+            onClicked: settings.close()
+          }
       }
 
       Column {
@@ -190,7 +211,7 @@ PopupWindow {
           }
         }
 
-        PanelSlider {
+        DragSlider {
           id: sizeSlider
           width: settings.contentWidth
           minimum: 24
@@ -253,7 +274,7 @@ PopupWindow {
           }
         }
 
-        PanelSlider {
+        DragSlider {
           id: borderOpacitySlider
           width: settings.contentWidth
           minimum: 0
@@ -265,6 +286,91 @@ PopupWindow {
           knobColor: Color.accent
           onReleased: function(v) {
             settings.dock.applySetting("borderOpacity", String(v / 100))
+          }
+        }
+      }
+
+      Toggle {
+        id: glowToggle
+        width: settings.contentWidth
+        label: "Border glow"
+        description: "Soft halo blooming out from the dock's border."
+        checked: settings.dock.flag("glow", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: settings.dock.applySetting("glow", String(!settings.dock.flag("glow", false)))
+      }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.lg
+        visible: settings.dock.flag("glow", false)
+
+        Column {
+          width: settings.contentWidth
+          spacing: Style.spacing.xs
+
+          Row {
+            width: settings.contentWidth
+            spacing: Style.spacing.md
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Glow strength"
+              color: Color.popups.text
+              font.family: Style.font.resolvedFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: Math.round(glowStrengthSlider.liveValue) + "%"
+              color: Util.alpha(Color.popups.text, 0.6)
+              font.family: Style.font.resolvedFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          DragSlider {
+            id: glowStrengthSlider
+            width: settings.contentWidth
+            minimum: 0
+            maximum: 100
+            step: 5
+            integer: true
+            value: Math.round(settings.dock.fraction("glowAmount", 0.5) * 100)
+            fillColor: Color.accent
+            knobColor: Color.accent
+            onReleased: function(v) {
+              settings.dock.applySetting("glowAmount", String(v / 100))
+            }
+          }
+        }
+
+        Column {
+          width: settings.contentWidth
+          spacing: Style.spacing.sm
+
+          Text {
+            width: settings.contentWidth
+            text: "Glow focus"
+            color: Color.popups.text
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          ButtonGroup {
+            options: [
+              { value: "full", label: "Full" },
+              { value: "bottom", label: "Bottom" }
+            ]
+            value: String(settings.dock.config.glowFocus || "") === "bottom" ? "bottom" : "full"
+            foreground: Color.popups.text
+            background: Color.popups.background
+            accent: Color.accent
+            onChanged: function(v) {
+              settings.dock.applySetting("glowFocus", JSON.stringify(String(v)))
+            }
           }
         }
       }
@@ -294,7 +400,7 @@ PopupWindow {
           }
         }
 
-        PanelSlider {
+        DragSlider {
           id: bgOpacitySlider
           width: settings.contentWidth
           minimum: 0
@@ -415,4 +521,5 @@ PopupWindow {
       }
     }
   }
+}
 }

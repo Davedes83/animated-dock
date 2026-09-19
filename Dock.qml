@@ -37,6 +37,8 @@ import qs.Ui
 //     "edge": "bottom", "align": "center", "iconSize": 44, "zoom": 0.45,
 //     "magnify": true, "spacing": 4, "padding": 8,
 //     "autohide": true, "dodge": true, "pressure": true,
+//     "border": true, "borderOpacity": 1.0, "glow": false,
+//     "glowAmount": 0.5, "glowFocus": "full",
 //     "items": [ { "desktop": "kitty" }, { "desktop": "steam" } ]
 //   }
 //
@@ -211,6 +213,34 @@ Item {
       : Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2))))
     : Border.none()
   readonly property var tipBorder: Border.surfaceSpec("tooltip", "border", Color.tooltip.border, Math.max(1, Style.space(1)))
+
+  // Border glow. A halo drawn behind the card from the border's own ring, in
+  // the theme's opaque popup border colour (so it survives `borderOpacity`
+  // and even stands alone when the hairline is off). `glowFocus` picks how
+  // the halo is weighted: "full" shows it evenly all round, "bottom" pushes
+  // the extra bloom onto the side of the border that faces the screen edge —
+  // an underglow look for a dock, strongest at the docked edge, normal up
+  // top. Off by default.
+  readonly property bool glowEnabled: flag("glow", false)
+  readonly property real glowStrength: fraction("glowAmount", 0.5)
+  readonly property bool glowBottomHeavy: String(config.glowFocus || "") === "bottom"
+  readonly property color glowColor: Border.color(
+    Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2))))
+  // How far past the card the halo may bloom; the window reserves this much
+  // room so the glow is never clipped by the surface edge.
+  readonly property int glowRoom: glowEnabled ? Math.max(1, Style.space(10)) : 0
+  // Extra room along the edge: both flanks for a centred card, one (the
+  // non-corner side) for start/end. A full-width card ends at the screen
+  // corners, so any extra would be off-screen — none.
+  readonly property int glowMainExtra: (glowRoom === 0 || fullWidth) ? 0
+    : (align === "center" ? glowRoom * 2 : glowRoom)
+  // Inward room on the cross axis (the side that faces the desktop). The
+  // docked-edge side already has the edge strip to glow across.
+  readonly property int glowCrossExtra: glowRoom
+  // Pixels the bottom-emphasis ring stack slides toward the docked edge.
+  readonly property real glowShift: glowBottomHeavy ? 1 : 0
+  readonly property real glowShiftX: vertical ? (edge === "right" ? glowShift : -glowShift) : 0
+  readonly property real glowShiftY: vertical ? 0 : (edge === "bottom" ? glowShift : -glowShift)
 
   // Re-index the spec's colours with a forced alpha on the flat fill; a
   // gradient keeps its stops, each tinted to the same opacity. Rectangle.border
@@ -854,8 +884,9 @@ Item {
   }
   readonly property int reserveMain: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax)).main - windowAxesAt(root.slot).main) : 0
   readonly property int reserveCross: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax)).cross - windowAxesAt(root.slot).cross) : 0
-  readonly property int windowCross: labelBand + cardCross + edgeGap
-  readonly property int windowMain: cardMain + (labels && !vertical ? Style.space(240) : 0)
+  readonly property int windowCross: labelBand + cardCross + edgeGap + glowCrossExtra
+  // Glow room rides along on the main axis too (whichever flanks need it).
+  readonly property int windowMain: cardMain + (labels && !vertical ? Style.space(240) : 0) + glowMainExtra
   readonly property int windowWidth: vertical ? windowCross + reserveCross : windowMain + reserveMain
   readonly property int windowHeight: vertical ? windowMain + reserveMain : windowCross + reserveCross
 
@@ -1504,6 +1535,58 @@ Item {
           }
 
           Component.onDestruction: if (counted) root.dockHovers -= 1
+        }
+
+        // Border glow. Plain translucent ring strokes stacked one pixel beyond
+        // the card's border, each fainter than the last — no effect passes,
+        // no texture sampling. Every stroke is a Rectangle bound to the
+        // same card size and animated with the same duration, so the glow
+        // is always identical to the dock border: same width, height,
+        // position and radius, tracking icon add/remove reflows in lockstep
+        // instead of lagging behind them. The first stroke is centred on
+        // the border line itself, so the light reads as coming FROM the
+        // outline rather than sitting detached behind the card.
+        Item {
+          id: glowLayers
+          visible: root.glowEnabled && dockWindow.shown
+          z: -1
+          x: (root.vertical && root.edgeFirst) ? root.edgeGap : 0
+          y: (!root.vertical && root.edgeFirst) ? root.edgeGap : 0
+          width: dockWindow.cardW
+          height: dockWindow.cardH
+          Behavior on width {
+            NumberAnimation { duration: root.settingsOpen ? 0 : root.animMs; easing.type: Easing.OutCubic }
+          }
+          Behavior on height {
+            NumberAnimation { duration: root.settingsOpen ? 0 : root.animMs; easing.type: Easing.OutCubic }
+          }
+          opacity: card.opacity
+          Behavior on opacity {
+            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+          }
+
+          // One 2px stroke per pixel-envelope step. `step` moves the ring
+          // edge outward; the stroke-half inside each edge is what hugs the
+          // border: step 0 is centred exactly on the border line, and the
+          // envelope grows 1px a layer to a 4px fade. `glowFocus` "bottom"
+          // nudges the whole stack one pixel toward the docked edge.
+          Repeater {
+            model: [0, 1, 2, 3]
+
+            Rectangle {
+              required property int index
+              readonly property int step: modelData
+              x: -1 - step + root.glowShiftX
+              y: -1 - step + root.glowShiftY
+              width: parent.width + (2 + step * 2)
+              height: parent.height + (2 + step * 2)
+              radius: Math.max(0, root.cardRadius + 1 + step)
+              color: "transparent"
+              border.width: 2
+              border.color: Util.alpha(root.glowColor,
+                root.glowStrength * [0.50, 0.32, 0.18, 0.10][step])
+            }
+          }
         }
 
         BorderSurface {
