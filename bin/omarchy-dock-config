@@ -515,6 +515,35 @@ cmd_bar_opacity() {
   echo "bar-opacity: $value"
 }
 
+# Set the dock's background opacity, atomically mirroring it onto the taskbar
+# (bar.backgroundOpacity) in the *same* write when "Sync taskbar opacity" is
+# on. This is the dock's background-opacity slider, which used to run two
+# configurator calls back-to-back — the paired writes raced each other's
+# tempfile+mv on shell.json and one edit was lost every time. One write,
+# one snapshot, one reload. Accepts a fraction (0.35) or a percentage (40).
+cmd_opacity() {
+  local value=$1 sync
+  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+    || die "usage: omarchy-dock-config opacity <fraction-or-percent>"
+
+  sync=$(jq -r "$DOCK.matchBarOpacity // false" "$CFG" 2>/dev/null)
+  [[ $sync == "true" ]] && ensure_bar_supported
+
+  if [[ $sync == "true" ]]; then
+    apply_bar \
+      '(.plugins[] | select(.id=="animated.dock")).backgroundOpacity = $o | .bar.backgroundOpacity = $o' \
+      --argjson o "$value" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
+    fi
+    echo "opacity: $value (taskbar mirrored)"
+  else
+    apply ".backgroundOpacity = \$o" --argjson o "$value" || exit 1
+    echo "opacity: $value"
+  fi
+}
+
 # Toggle "Sync taskbar corners": on -> the taskbar's background is given the
 # same corner shape as the dock (bar.cornerShape: square / pill / rounded,
 # plus bar.cornerRadius when the dock has an explicit rounded radius);
@@ -587,6 +616,47 @@ cmd_bar_corner() {
   fi
 }
 
+# Set the dock's corner shape, atomically mirroring it onto the taskbar
+# (bar.cornerShape / bar.cornerRadius) in the *same* write when "Sync taskbar
+# corners" is on. This is the settings popup's Corner Shape picker, which used
+# to run two configurator calls back-to-back — the paired writes raced each
+# other's tempfile+mv on shell.json and the dock part was lost, so clicks
+# looked frozen. One write, one snapshot, one reload.
+cmd_corner_shape() {
+  local shape=$1 sync radius radius_js
+  case "$shape" in
+    square|pill|rounded) ;;
+    *) die "usage: omarchy-dock-config corner-shape <square|pill|rounded>" ;;
+  esac
+
+  sync=$(jq -r "$DOCK.matchBarCorners // false" "$CFG" 2>/dev/null)
+  [[ $sync == "true" ]] && ensure_bar_supported
+
+  if [[ $sync == "true" ]]; then
+    radius=$(jq -r "$DOCK.cornerRadius // null" "$CFG" 2>/dev/null)
+    if [[ $shape == "rounded" && $radius =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      radius_js=$radius
+    else
+      radius_js=null
+    fi
+    apply_bar \
+      '(.plugins[] | select(.id=="animated.dock")).cornerShape = $shape | .bar.cornerShape = $shape | if ($radius != null) then .bar.cornerRadius = $radius else del(.bar.cornerRadius) end' \
+      --arg shape "$shape" --argjson radius "$radius_js" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
+    fi
+    if [[ $radius_js == "null" ]]; then
+      echo "corner-shape: $shape (taskbar mirrored)"
+    else
+      echo "corner-shape: $shape (taskbar mirrored, bar.cornerRadius=$radius_js)"
+    fi
+  else
+    apply ".cornerShape = \$shape" --arg shape "$shape" || exit 1
+    echo "corner-shape: $shape"
+  fi
+}
+
 # Make sure the active taskbar understands bar.backgroundOpacity and restart
 # when it was just enabled. Idempotent; touches nothing when support is there.
 cmd_ensure_bar() {
@@ -609,8 +679,10 @@ if [[ $# -gt 0 ]]; then
     add)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_add "${1:-}" "${2:-}" ;;
     set)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set "${1:-}" "${2:-}" ;;
     bar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_opacity "${1:-}" ;;
+    opacity)     require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_opacity "${1:-}" ;;
     matchbar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_opacity "${1:-}" ;;
     bar-corner) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_corner ;;
+    corner-shape) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_corner_shape "${1:-}" ;;
     matchbar-corners) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_corners "${1:-}" ;;
     ensure-bar) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_ensure_bar ;;
     state)    cmd_state ;;
@@ -630,7 +702,11 @@ and the shell hot-reloads the change on save.
   set <key> <json>       set a dock-level setting; "null" deletes a key
   bar-opacity <fraction-or-percent>  set the taskbar's background opacity
   matchbar-opacity <true|false>  sync the taskbar's opacity with the dock's
+  opacity <fraction-or-percent>  set the dock's background opacity (also mirrors
+                       the taskbar when "Sync taskbar opacity" is on)
   bar-corner                 re-mirror the dock's corner shape onto the taskbar
+  corner-shape <square|pill|rounded>  set the dock's corner shape (also mirrors
+                       the taskbar keys when "Sync taskbar corners" is on)
   matchbar-corners <true|false>  sync the taskbar's corners with the dock's
   ensure-bar                 install taskbar sync support (idempotent)
   state                  print the plugin's entry

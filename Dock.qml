@@ -333,26 +333,6 @@ Item {
     Util.execDetached(configCmd + " set " + Util.shellQuote(key) + " " + Util.shellQuote(String(jsonValue)))
   }
 
-  // Keeps the taskbar's background opacity in step with the dock when the
-  // "Sync taskbar opacity" setting is on. Purely user-driven — called from
-  // the settings toggle and the background-opacity slider, never from a
-  // config binding, so a shell.json write can't loop back into a write.
-  function syncBarOpacity(value) {
-    if (!root.matchBarOpacity) return
-    var o = value !== undefined ? value : root.backgroundOpacity
-    Util.execDetached(configCmd + " bar-opacity " + Util.shellQuote(String(o)))
-  }
-
-  // Keeps the taskbar's corner shape in step with the dock when the "Sync
-  // taskbar corners" setting is on. The configurator re-reads the dock's own
-  // cornerShape/cornerRadius from shell.json, so the pushed values stay exact
-  // even though only the shape picker triggers this. Purely user-driven, like
-  // syncBarOpacity(), so a shell.json write can never loop back into a write.
-  function syncBarCorners() {
-    if (!root.matchBarCorners) return
-    Util.execDetached(configCmd + " bar-corner")
-  }
-
   // Same references in the same order.
   function sameWindows(a, b) {
     if (a.length !== b.length) return false
@@ -820,13 +800,14 @@ Item {
   readonly property real backgroundOpacity: fraction("backgroundOpacity", 1.0)
   // When on, the taskbar's background opacity is kept equal to the dock's
   // `backgroundOpacity` setting (written as `bar.backgroundOpacity` in
-  // shell.json). User actions call syncBarOpacity(); there is deliberately
-  // no config-reactive binding here, so writes never feed back into the
-  // reload loop.
+  // shell.json). The background-opacity slider's `opacity` subcommand applies
+  // both in one atomic write; there is deliberately no config-reactive
+  // binding here, so writes never feed back into the reload loop.
   readonly property bool matchBarOpacity: flag("matchBarOpacity", false)
   // When on, the taskbar's corner shape tracks the dock's cornerShape /
   // cornerRadius (written as bar.cornerShape / bar.cornerRadius in
-  // shell.json). Same user-driven only pattern as matchBarOpacity.
+  // shell.json). The shape picker's `corner-shape` subcommand applies both in
+  // one atomic write. Same user-driven only pattern as matchBarOpacity.
   readonly property bool matchBarCorners: flag("matchBarCorners", false)
   readonly property real iconOpacity: fraction("iconOpacity", 1.0)
 

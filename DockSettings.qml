@@ -9,8 +9,9 @@ import qs.Ui
 // right-click "Settings" row. Anchored exactly like the context menu and
 // held open the same way: a HyprlandFocusGrab routes input to the window
 // and the dock, so clicking anywhere else clears the grab and the popup
-// closes. Every control writes through the bundled configurator's `set`
-// subcommand (typed JSON), and the shell hot-reloads shell.json on save,
+// closes. Every control writes through the bundled configurator (the `set`
+// subcommand or the atomic `opacity` / `corner-shape` pushes that mirror the
+// taskbar in the same write), and the shell hot-reloads shell.json on save,
 // so changes land live.
 PopupWindow {
   id: settings
@@ -441,8 +442,7 @@ PopupWindow {
           fillColor: Color.accent
           knobColor: Color.accent
           onReleased: function(v) {
-            settings.dock.applySetting("backgroundOpacity", String(v / 100))
-            settings.dock.syncBarOpacity(v / 100)
+            Util.execDetached(settings.dock.configCmd + " opacity " + Util.shellQuote(String(v / 100)))
           }
         }
       }
@@ -510,8 +510,7 @@ PopupWindow {
           background: Color.popups.background
           accent: Color.accent
           onChanged: function(v) {
-            settings.dock.applySetting("cornerShape", JSON.stringify(String(v)))
-            settings.dock.syncBarCorners()
+            Util.execDetached(settings.dock.configCmd + " corner-shape " + Util.shellQuote(String(v)))
           }
         }
       }

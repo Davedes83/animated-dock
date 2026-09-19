@@ -121,7 +121,9 @@ omarchy-dock-config move <from> <to>
 omarchy-dock-config set-item <index> <json>
 omarchy-dock-config add <json> [index]
 omarchy-dock-config set <key> <json>     # dock-level; null unsets
-omarchy-dock-config bar-opacity <n>      # taskbar opacity: 0.35 or 35
+omarchy-dock-config opacity <n>          # dock bg opacity (0.35 or 35); also mirrors taskbar when sync is on
+omarchy-dock-config corner-shape <square|pill|rounded>  # dock shape; also mirrors taskbar when sync is on
+omarchy-dock-config bar-opacity <n>      # taskbar opacity only: 0.35 or 35
 omarchy-dock-config matchbar-opacity <true|false>
 omarchy-dock-config bar-corner             # re-mirror dock corner shape to taskbar
 omarchy-dock-config matchbar-corners <true|false>
@@ -135,8 +137,9 @@ taskbar mirror the dock: opacity as opaque as the dock's `backgroundOpacity`,
 corners shaped like the dock's `cornerShape` / `cornerRadius`. The dock writes
 those as `bar.backgroundOpacity` and `bar.cornerShape` / `bar.cornerRadius` in
 `shell.json` — but only a taskbar that reads them reacts, and stock
-`omarchy.bar` does not. So the first time a sync setting (or `bar-opacity`)
-runs, the configurator installs the support itself:
+`omarchy.bar` does not. So the first time a sync setting (or `bar-opacity`,
+`opacity`, or `corner-shape` with sync on) runs, the configurator installs the
+support itself:
 
 1. If the active taskbar is the stock one, it clones it into
    `~/.config/omarchy/plugins/<user>.bar` and switches to it — the same
