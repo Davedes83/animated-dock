@@ -1,50 +1,50 @@
 import QtQuick
 import Quickshell
+import Quickshell.Wayland
 import Quickshell.Hyprland
 import qs.Commons
 import qs.Ui
 
-// Settings popup for the dock, opened from the Omarchy Menu icon's
-// right-click "Settings" row. Anchored exactly like the context menu and
-// held open the same way: a HyprlandFocusGrab routes input to the window
-// and the dock, so clicking anywhere else clears the grab and the popup
-// closes. Every control writes through the bundled configurator's `set`
-// subcommand (typed JSON), and the shell hot-reloads shell.json on save,
-// so changes land live.
-PopupWindow {
+// Settings panel for the dock, opened from the Omarchy Menu icon's
+// right-click "Settings" row. A plain unanchored layer-shell surface —
+// wlr-layer-shell auto-centres a surface on any axis it has no anchor on
+// (the same rule Dock.qml's own windows use), so with *no* anchors set at
+// all this is centred on both axes, on whatever monitor it targets, always.
+//
+// This used to be a PopupWindow anchored to the dock window's icon, with
+// its position captured once and re-derived against the dock's *current*
+// geometry on every anchoring pass. That never worked across an edge
+// change: picking a new edge relocates the dock to a different side of the
+// screen and swaps its width/height, and re-deriving a point meant for the
+// old window against the new one routinely landed far outside it — a
+// popup's positioner is fundamentally relative to (and constrained near)
+// its parent surface, so there was no way to reliably plant it at an
+// arbitrary screen point that way. A plain centred top-level window sits
+// outside that whole problem: it isn't relative to the dock at all.
+//
+// Held open the same way as before: a HyprlandFocusGrab routes input to
+// this window and the dock, so clicking anywhere else clears the grab and
+// the panel closes. Every control writes through the bundled configurator's
+// `set` subcommand (typed JSON), and the shell hot-reloads shell.json on
+// save, so changes land live.
+PanelWindow {
   id: settings
 
   required property var dock
 
   property var anchorCell: null
   property bool open: false
-  // Screen position captured on open, so edits that resize the dock card
-  // (icon size, shape) can't re-anchor the popup and make it jump under the
-  // mouse. The dock window has no QML x/y, so its on-screen origin is derived
-  // from edge/align/fullWidth and monitor geometry (windowScreenRect), and
-  // the open-time anchor rect is stored in local terms too. onAnchoring
-  // re-derives the local rect from the current window origin so the popup
-  // stays glued to the screen point it opened on. Stale writes are skipped —
-  // re-committing a popup position every animation frame is what flickers its
-  // border.
-  property bool locked: false
-  property real lockRX: 0
-  property real lockRY: 0
-  property real lockScreenX: 0
-  property real lockScreenY: 0
   // Border radius captured on open: matching the dock's current shape without
   // chasing cardRadius live (which changes with icon size in pill mode).
   property int lockRadius: Style.cornerRadius
 
   function openFor(cell) {
     settings.anchorCell = cell
-    settings.lockAtAnchor()
-    if (settings.open) {
-      settings.anchor.updateAnchor()
-      return
+    settings.lockRadius = Math.min(settings.dock.cardRadius, Style.cornerRadius)
+    if (!settings.open) {
+      settings.open = true
+      settings.dock.holdForPopup()
     }
-    settings.open = true
-    settings.dock.holdForPopup()
   }
 
   function anchorWindowScreenName() {
@@ -54,44 +54,38 @@ PopupWindow {
     return ""
   }
 
-  function lockAtAnchor() {
-    var target = settings.anchorCell
-    var window = target ? target.QsWindow.window : null
-    if (!window) return
-    var p = settings.dock.popupAnchorPoint(target, window, settings.implicitWidth, settings.implicitHeight, true)
-    settings.lockRX = p.x
-    settings.lockRY = p.y
-    var wsr = settings.dock.windowScreenRect(settings.anchorWindowScreenName())
-    if (wsr) {
-      settings.lockScreenX = wsr.x + p.x
-      settings.lockScreenY = wsr.y + p.y
-    } else {
-      settings.lockScreenX = p.x
-      settings.lockScreenY = p.y
-    }
-    settings.lockRadius = Math.min(settings.dock.cardRadius, Style.cornerRadius)
-    settings.locked = true
-  }
-
   function close() {
     if (!settings.open) return
     settings.open = false
     settings.dock.popupReleased()
   }
 
+  screen: {
+    var name = settings.anchorWindowScreenName()
+    var list = Quickshell.screens
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].name || "") === name) return list[i]
+    }
+    return list.length > 0 ? list[0] : null
+  }
+
   visible: open
   color: "transparent"
+  WlrLayershell.namespace: "omarchy-animated-dock-settings"
+  WlrLayershell.layer: WlrLayer.Overlay
+  WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+  exclusionMode: ExclusionMode.Normal
+  exclusiveZone: 0
+  // No anchors set on any edge — centred on both axes automatically.
 
   readonly property int pad: Style.spacing.md
   readonly property int contentWidth: Style.space(300)
   readonly property var settingsBorder: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
   implicitWidth: contentWidth + pad * 2 + Border.left(settingsBorder) + Border.right(settingsBorder)
-  // Pinned to the implicit width so a live value label ("42 px") can never
-  // reflow the box. The dock window is frozen (resized to the slider's max)
-  // while this popup is open, so nothing below ever re-sizes it.
-  width: contentWidth + pad * 2 + Border.left(settingsBorder) + Border.right(settingsBorder)
   implicitHeight: Math.round(column.implicitHeight + pad * 2 + Border.top(settingsBorder) + Border.bottom(settingsBorder))
+  width: implicitWidth
+  height: implicitHeight
 
   HyprlandFocusGrab {
     active: settings.open
@@ -102,26 +96,6 @@ PopupWindow {
       return out
     }
     onCleared: settings.close()
-  }
-
-  anchor {
-    adjustment: PopupAdjustment.Slide
-    edges: Edges.Top | Edges.Left
-    gravity: settings.dock.popupGravity
-    window: settings.anchorCell ? settings.anchorCell.QsWindow.window : null
-
-    onAnchoring: {
-      if (!settings.locked) return
-      var wsr = settings.dock.windowScreenRect(settings.anchorWindowScreenName())
-      if (!wsr) return
-      var nx = settings.lockScreenX - wsr.x
-      var ny = settings.lockScreenY - wsr.y
-      if (nx === anchor.rect.x && ny === anchor.rect.y) return
-      anchor.rect.x = nx
-      anchor.rect.y = ny
-      anchor.rect.width = 1
-      anchor.rect.height = 1
-    }
   }
 
   BorderSurface {
