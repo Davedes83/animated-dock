@@ -77,6 +77,7 @@ Settings on the plugin entry:
 | `animation` | Reflow animation length, ms (default 110) |
 | `spacing`, `padding` | In the card |
 | `backgroundOpacity` | Card opacity (0–1) |
+| `iconOpacity` | Icon/foreground opacity (0–1; 1.0 default) |
 | `matchBarOpacity` | Sync the taskbar background opacity to `backgroundOpacity` (default `false`). Installed automatically on first use (see below) |
 | `matchBarCorners` | Sync the taskbar's corner shape to the dock's (default `false`). Same automatic install (see below) |
 | `matchBarGlow` | Sync the taskbar's border glow to the dock's (default `false`). Same automatic install (see below) |
@@ -96,6 +97,7 @@ Settings on the plugin entry:
 | `showRunning` | The running-apps section (default true) |
 | `labels` | Label pill beside the hovered item (default true) |
 | `tintIcons`, `tintRunning`, `monochrome` | Icon colorization (defaults false / true / false) |
+| `tooltips` | Show the icon's name on hover (default true) |
 | `glyphColor` | `"accent"` or the default text color |
 | `fullWidth`, `edgeGap` | Card length along the edge |
 
@@ -108,6 +110,24 @@ Item forms in `items[]`:
 - `{ "trash": true }` — open the trash in the file manager
 - `{ "spacer": true }` — divider rule
 - `{ "when": "<cmd>" }` — show only while the command exits 0
+
+### Settings popup
+
+Right-click the dock and pick **Settings** to edit everything visually. The
+popup is grouped into five bold uppercase sections so it stays easy to scan
+as the dock grows:
+
+- **Appearance** — icon size, background opacity, corner shape, position,
+  full length, and the border toggle beside its opacity slider
+- **Glow** — the border-glow toggle together with the strength slider and
+  focus picker that it reveals
+- **Behaviour** — auto-hide and icon-name tooltips
+- **Taskbar sync** — the "Sync taskbar opacity / corners / glow" toggles
+- **Support** — the Ko-fi link
+
+Every control writes through the configurator, so changes apply instantly,
+and the sync toggles auto-install taskbar support the first time they are
+used (see below).
 
 ### Programmatic CLI
 
