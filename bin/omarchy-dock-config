@@ -6,7 +6,7 @@
 # Omarchy shell re-reads on save — so most changes here show up on the dock
 # immediately. The exceptions: ensure-bar patches a *user-owned* taskbar
 # clone's Bar.qml, and installing that support once needs a shell restart
-# (done automatically the first time the sync setting is used).
+# (done automatically the first time a sync setting is used).
 #
 # The dock drives shell.json through the non-interactive subcommands
 # (pin / unpin / move) rather than writing QML-side, so the staged-tempfile
@@ -257,14 +257,17 @@ apply_bar() {
 
 # -------------------------------------------------------------- bar installer
 
-# The dock's "Sync taskbar opacity" setting writes bar.backgroundOpacity to
-# shell.json, but only a taskbar that reads that key reacts. Stock omarchy.bar
-# ignores it, so making support automatic means: ensure_bar_supported() makes
-# the *active* taskbar support it, once, idempotently —
-#   - nothing to do if the active bar already has setBackgroundOpacity();
+# The dock's taskbar-sync settings ("Sync taskbar opacity" / "Sync taskbar
+# corners") write bar.backgroundOpacity and bar.cornerShape/bar.cornerRadius
+# to shell.json, but only a taskbar that reads those reacts. Stock omarchy.bar
+# ignores them, so making support automatic means: ensure_bar_supported()
+# makes the *active* taskbar support them, once, idempotently —
+#   - nothing to do if the active bar already understands both (has the
+#     setBackgroundOpacity() and setBarCorners() functions);
 #   - otherwise it clones the stock bar (or re-activates the user's existing
 #     clone) exactly like `omarchy plugin clone`, then patches the user-owned
-#     Bar.qml with the anchored edits below.
+#     Bar.qml with the anchored edits below (per-feature; an older patched bar
+#     just backfills the missing piece).
 # Any on-disk change sets BAR_INSTALLED=1 so the caller can restart the shell
 # once: the freshly patched bar only loads on restart.
 
@@ -272,11 +275,13 @@ PLUGINS_DIR="$HOME/.config/omarchy/plugins"
 OMARCHY_BIN="${OMARCHY_BIN:-omarchy}"
 BAR_INSTALLED=0
 
-# Add backgroundOpacity support to a copied (user-owned) bar's Bar.qml.
-# Anchored on exact stock lines, each of which must appear exactly once, or we
-# refuse to touch the file: a differently-shaped future bar should fail loudly
-# here rather than corrupt the user's own copy. Idempotent, writes a .bak, and
-# re-checks the resulting file before replacing the original.
+# Add backgroundOpacity and corner-shape support to a copied (user-owned)
+# bar's Bar.qml. Anchored on exact stock lines, each of which must appear
+# exactly once, or we refuse to touch the file: a differently-shaped future
+# bar should fail loudly here rather than corrupt the user's own copy.
+# Per-feature and idempotent — each edit is skipped when its guard marker
+# function is already present, so an older patched bar just backfills the
+# missing piece. Writes a .bak and re-checks the file before replacing it.
 patch_bar() {
   local qml=$1
   python3 - "$qml" <<'PY' >/dev/null || die "could not patch $qml — see the python3 error above"
@@ -284,8 +289,15 @@ import shutil, sys
 
 p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
-if "function setBackgroundOpacity" in src:
-    sys.exit(0)  # already supported
+
+def patched(marker):
+    return marker in src
+
+wants_opacity = not patched("function setBackgroundOpacity")
+wants_corners = not patched("function setBarCorners")
+
+if not (wants_opacity or wants_corners):
+    sys.exit(0)  # fully supported already
 
 prop_anchor = "  property bool transparent: false"
 call_anchor = "    setRequestedTransparency(config.transparent === true)"
@@ -303,56 +315,115 @@ def once(anchor, label):
         sys.exit(1)
 
 
-once(prop_anchor, "transparent-property")
-once(call_anchor, "setRequestedTransparency-call")
-once(fn_anchor, "restoreForegroundAnimation-function")
-if src.count(color_pair) != 1:
-    print("patch_bar: main taskbar background line not found exactly once —"
-          " this bar version is not supported", file=sys.stderr)
-    sys.exit(1)
+if wants_opacity:
+    once(prop_anchor, "transparent-property")
+    once(call_anchor, "setRequestedTransparency-call")
+    once(fn_anchor, "restoreForegroundAnimation-function")
+    if src.count(color_pair) != 1:
+        print("patch_bar: main taskbar background line not found exactly once —"
+              " this bar version is not supported", file=sys.stderr)
+        sys.exit(1)
 
-shutil.copy2(p, p + ".bak")
+    prop = ("\n"
+            "  // Bar background translucency, driven by `bar.backgroundOpacity` in\n"
+            "  // shell.json (0\u20131, or a percentage above 1). Missing/invalid = 1.0\n"
+            "  // (the normal opaque bar). The dock's \"Sync taskbar opacity\" setting\n"
+            "  // writes this key. Independent of `transparent`, which hard-overrides\n"
+            "  // the surface to fully transparent.\n"
+            "  property real backgroundOpacity: 1.0")
+    i = src.index(prop_anchor) + len(prop_anchor)
+    src = src[:i] + prop + src[i:]
 
-prop = ("\n"
-        "  // Bar background translucency, driven by `bar.backgroundOpacity` in\n"
-        "  // shell.json (0\u20131, or a percentage above 1). Missing/invalid = 1.0\n"
-        "  // (the normal opaque bar). The dock's \"Sync taskbar opacity\" setting\n"
-        "  // writes this key. Independent of `transparent`, which hard-overrides\n"
-        "  // the surface to fully transparent.\n"
-        "  property real backgroundOpacity: 1.0")
-i = src.index(prop_anchor) + len(prop_anchor)
-src = src[:i] + prop + src[i:]
+    j = src.index(call_anchor) + len(call_anchor)
+    src = src[:j] + "\n    root.setBackgroundOpacity(config.backgroundOpacity)" + src[j:]
 
-j = src.index(call_anchor) + len(call_anchor)
-src = src[:j] + "\n    root.setBackgroundOpacity(config.backgroundOpacity)" + src[j:]
+    fn = ("  function setBackgroundOpacity(value) {\n"
+          "    var n = Number(value)\n"
+          "    if (!isFinite(n) || n < 0) {\n"
+          "      root.backgroundOpacity = 1.0\n"
+          "      return\n"
+          "    }\n"
+          "    if (n > 1) n = n / 100\n"
+          "    root.backgroundOpacity = Math.min(1, n)\n"
+          "  }\n\n")
+    k = src.index(fn_anchor)
+    src = src[:k] + fn + src[k:]
 
-fn = ("  function setBackgroundOpacity(value) {\n"
-      "    var n = Number(value)\n"
-      "    if (!isFinite(n) || n < 0) {\n"
-      "      root.backgroundOpacity = 1.0\n"
-      "      return\n"
-      "    }\n"
-      "    if (n > 1) n = n / 100\n"
-      "    root.backgroundOpacity = Math.min(1, n)\n"
-      "  }\n\n")
-k = src.index(fn_anchor)
-src = src[:k] + fn + src[k:]
+    src = src.replace(
+        color_pair,
+        'color: root.transparent ? "transparent" : Util.alpha(root.background, root.backgroundOpacity)\n'
+        + color_next,
+        1,
+    )
 
-src = src.replace(
-    color_pair,
-    'color: root.transparent ? "transparent" : Util.alpha(root.background, root.backgroundOpacity)\n'
-    + color_next,
-    1,
-)
+# Corner anchors refer to content introduced by the opacity edits above, so
+# they are verified (and applied) *after* those edits land.
+if wants_corners:
+    once("  property real backgroundOpacity: 1.0", "backgroundOpacity-property")
+    once("    root.setBackgroundOpacity(config.backgroundOpacity)", "setBackgroundOpacity-call")
+    once(fn_anchor, "restoreForegroundAnimation-function")
+    once("    color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
+         + "    surfaceFormat.opaque: false", "alpha-background-line")
+
+    corner_prop = ("\n"
+                   "  // Taskbar corner rounding, driven by `bar.cornerShape` and\n"
+                   "  // `bar.cornerRadius` in shell.json (radius in theme spaces,\n"
+                   "  // like the dock's cornerRadius). Missing shape = plain\n"
+                   "  // rectangle. The dock's \"Sync taskbar corners\" setting writes\n"
+                   "  // these keys.\n"
+                   "  property real barCornerRadius: 0")
+    i = src.index("  property real backgroundOpacity: 1.0") + len("  property real backgroundOpacity: 1.0")
+    src = src[:i] + corner_prop + src[i:]
+
+    j = src.index("    root.setBackgroundOpacity(config.backgroundOpacity)") \
+        + len("    root.setBackgroundOpacity(config.backgroundOpacity)")
+    src = src[:j] + "\n    root.setBarCorners(config.cornerShape, config.cornerRadius)" + src[j:]
+
+    fn = ("  function setBarCorners(shape, radius) {\n"
+          "    var s = String(shape || \"\").toLowerCase()\n"
+          "    if (s !== \"square\" && s !== \"pill\" && s !== \"rounded\") {\n"
+          "      root.barCornerRadius = 0\n"
+          "      return\n"
+          "    }\n"
+          "    if (s === \"square\") {\n"
+          "      root.barCornerRadius = 0\n"
+          "    } else if (s === \"pill\") {\n"
+          "      root.barCornerRadius = Math.max(1, Math.round(root.barSize / 2))\n"
+          "    } else {\n"
+          "      root.barCornerRadius = Number(radius) > 0 ? Style.space(Number(radius)) : Style.cornerRadius\n"
+          "    }\n"
+          "  }\n\n")
+    k = src.index(fn_anchor)
+    src = src[:k] + fn + src[k:]
+
+    src = src.replace(
+        "    color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
+        + "    surfaceFormat.opaque: false",
+        "    color: \"transparent\"\n"
+        "    surfaceFormat.opaque: false\n"
+        "\n"
+        "    // The surface is transparent; this shape paints the real background so\n"
+        "    // it can be rounded. Same color/opacity expression as the old window\n"
+        "    // color, radius from setBarCorners() (0 keeps the plain rectangle).\n"
+        "    Rectangle {\n"
+        "      id: barBackgroundSurface\n"
+        "      anchors.fill: parent\n"
+        "      color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
+        "      radius: root.barCornerRadius\n"
+        "    }\n",
+        1,
+    )
 
 if src.count("{") != src.count("}"):
     print("patch_bar: brace balance broken after edit", file=sys.stderr)
     sys.exit(1)
 
+shutil.copy2(p, p + ".bak")
 open(p, "w", encoding="utf-8").write(src)
 PY
   grep -q 'function setBackgroundOpacity' "$qml" \
-    || die "could not patch $qml — the edit did not land"
+    && grep -q 'function setBarCorners' "$qml" \
+    || die "could not patch $qml — the edits did not land"
 }
 
 ensure_bar_supported() {
@@ -380,7 +451,8 @@ ensure_bar_supported() {
   dir="$PLUGINS_DIR/$bar_id"
   [[ -f $dir/Bar.qml ]] || die "taskbar '$bar_id' has no Bar.qml at $dir"
 
-  grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" && return 0
+  grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" \
+    && grep -q 'function setBarCorners' "$dir/Bar.qml" && return 0
   patch_bar "$dir/Bar.qml"
   BAR_INSTALLED=1
 }
@@ -388,8 +460,9 @@ ensure_bar_supported() {
 # The shell.json write (apply_bar, above) happens *before* any restart, so a
 # single restart picks up the patched bar and the setting at the same time.
 restart_shell_after_install() {
+  local title=${2:-Sync taskbar setting}
   require "$OMARCHY_BIN"
-  omarchy-notification-send -g "󰍝" "Sync taskbar opacity" "$1" >/dev/null 2>&1 || true
+  omarchy-notification-send -g "󰍝" "$title" "$1" >/dev/null 2>&1 || true
   "$OMARCHY_BIN" restart shell >/dev/null 2>&1 || true
 }
 
@@ -412,7 +485,7 @@ cmd_matchbar_opacity() {
       --argjson o "$current" \
       || exit 1
     if (( BAR_INSTALLED )); then
-      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it."
+      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
     fi
     echo "matchbar-opacity: on (bar.backgroundOpacity = $current)"
   else
@@ -420,7 +493,7 @@ cmd_matchbar_opacity() {
       'del(.bar.backgroundOpacity) | del((.plugins[] | select(.id=="animated.dock")).matchBarOpacity)' \
       || exit 1
     if (( BAR_INSTALLED )); then
-      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it."
+      restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
     fi
     echo "matchbar-opacity: off (taskbar returns to its normal opacity)"
   fi
@@ -437,9 +510,81 @@ cmd_bar_opacity() {
   ensure_bar_supported
   apply_bar '(.bar.backgroundOpacity = $o)' --argjson o "$value" || exit 1
   if (( BAR_INSTALLED )); then
-    restart_shell_after_install "Taskbar opacity support installed — restarting to apply it."
+    restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
   fi
   echo "bar-opacity: $value"
+}
+
+# Toggle "Sync taskbar corners": on -> the taskbar's background is given the
+# same corner shape as the dock (bar.cornerShape: square / pill / rounded,
+# plus bar.cornerRadius when the dock has an explicit rounded radius);
+# off -> the taskbar returns to its plain rectangular background.
+cmd_matchbar_corners() {
+  local on=$1
+  [[ $on == "true" || $on == "false" ]] \
+    || die "usage: omarchy-dock-config matchbar-corners <true|false>"
+
+  ensure_bar_supported
+
+  if [[ $on == "true" ]]; then
+    local shape radius radius_js
+    shape=$(jq -r "$DOCK.cornerShape // \"rounded\"" "$CFG" 2>/dev/null)
+    case "$shape" in square|pill|rounded) ;; *) shape="rounded" ;; esac
+    radius=$(jq -r "$DOCK.cornerRadius // null" "$CFG" 2>/dev/null)
+    if [[ $shape == "rounded" && $radius =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+      radius_js=$radius
+    else
+      radius_js=null
+    fi
+    apply_bar \
+      '(.bar.cornerShape = $shape) | if ($radius != null) then (.bar.cornerRadius = $radius) else del(.bar.cornerRadius) end | (.plugins[] | select(.id=="animated.dock")).matchBarCorners = true' \
+      --arg shape "$shape" --argjson radius "$radius_js" \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
+    fi
+    if [[ $radius_js == "null" ]]; then
+      echo "matchbar-corners: on (bar.cornerShape = $shape)"
+    else
+      echo "matchbar-corners: on (bar.cornerShape = $shape, bar.cornerRadius = $radius_js)"
+    fi
+  else
+    apply_bar \
+      'del(.bar.cornerShape) | del(.bar.cornerRadius) | del((.plugins[] | select(.id=="animated.dock")).matchBarCorners)' \
+      || exit 1
+    if (( BAR_INSTALLED )); then
+      restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
+    fi
+    echo "matchbar-corners: off (taskbar returns to its rectangular background)"
+  fi
+}
+
+# Re-mirror the dock's current corner shape onto the taskbar right now. The
+# settings UI triggers this when the Corner Shape picker changes, so the
+# taskbar follows the dock live while the sync toggle is on.
+cmd_bar_corner() {
+  ensure_bar_supported
+  local shape radius radius_js
+  shape=$(jq -r "$DOCK.cornerShape // \"rounded\"" "$CFG" 2>/dev/null)
+  case "$shape" in square|pill|rounded) ;; *) shape="rounded" ;; esac
+  radius=$(jq -r "$DOCK.cornerRadius // null" "$CFG" 2>/dev/null)
+  if [[ $shape == "rounded" && $radius =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    radius_js=$radius
+  else
+    radius_js=null
+  fi
+  apply_bar \
+    '(.bar.cornerShape = $shape) | if ($radius != null) then (.bar.cornerRadius = $radius) else del(.bar.cornerRadius) end' \
+    --arg shape "$shape" --argjson radius "$radius_js" \
+    || exit 1
+  if (( BAR_INSTALLED )); then
+    restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
+  fi
+  if [[ $radius_js == "null" ]]; then
+    echo "bar-corner: shape=$shape (no explicit dock radius)"
+  else
+    echo "bar-corner: shape=$shape, radius=$radius_js"
+  fi
 }
 
 # Make sure the active taskbar understands bar.backgroundOpacity and restart
@@ -449,9 +594,9 @@ cmd_ensure_bar() {
   local bar_id
   bar_id=$(jq -r '.bar.id // "omarchy.bar"' "$CFG")
   if (( BAR_INSTALLED )); then
-    restart_shell_after_install "Taskbar opacity support was just installed for '$bar_id'."
+    restart_shell_after_install "Taskbar sync support was just installed for '$bar_id'."
   else
-    echo "ensure-bar: taskbar '$bar_id' already supports backgroundOpacity — nothing to do."
+    echo "ensure-bar: taskbar '$bar_id' already supports backgroundOpacity and corners — nothing to do."
   fi
 }
 
@@ -465,6 +610,8 @@ if [[ $# -gt 0 ]]; then
     set)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set "${1:-}" "${2:-}" ;;
     bar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_opacity "${1:-}" ;;
     matchbar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_opacity "${1:-}" ;;
+    bar-corner) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_corner ;;
+    matchbar-corners) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_corners "${1:-}" ;;
     ensure-bar) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_ensure_bar ;;
     state)    cmd_state ;;
     -h | --help | help)
@@ -483,13 +630,15 @@ and the shell hot-reloads the change on save.
   set <key> <json>       set a dock-level setting; "null" deletes a key
   bar-opacity <fraction-or-percent>  set the taskbar's background opacity
   matchbar-opacity <true|false>  sync the taskbar's opacity with the dock's
-  ensure-bar                 install taskbar backgroundOpacity support (idempotent)
+  bar-corner                 re-mirror the dock's corner shape onto the taskbar
+  matchbar-corners <true|false>  sync the taskbar's corners with the dock's
+  ensure-bar                 install taskbar sync support (idempotent)
   state                  print the plugin's entry
 
-The first time "Sync taskbar opacity" (or bar-opacity) runs, ensure-bar
-installs the small taskbar support the dock needs and restarts the shell
-once; after that all three commands are instant. The bar's Bar.qml is only
-touched when it is an unsupported user-owned copy (stock omarchy.bar is
+The first time any sync setting runs, ensure-bar installs the small taskbar
+support the dock needs (backgroundOpacity + corner shape) and restarts the
+shell once; after that all these commands are instant. The bar's Bar.qml is
+only touched when it is an unsupported user-owned copy (stock omarchy.bar is
 first cloned into your plugins, exactly like `omarchy plugin clone`).
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
@@ -497,7 +646,7 @@ magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
 tiles, tileRadius, tileInset, tileOpacity, border, borderOpacity, cornerRadius,
 cornerShape, autohide, dodge, pressure, revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
 hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
-tintRunning, monochrome, glyphColor, matchBarOpacity, fullWidth, edgeGap, items.
+tintRunning, monochrome, glyphColor, matchBarOpacity, matchBarCorners, fullWidth, edgeGap, items.
 
 Item forms in items[]:
   { "desktop": "kitty" }                  launch a desktop entry

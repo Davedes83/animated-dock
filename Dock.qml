@@ -343,6 +343,16 @@ Item {
     Util.execDetached(configCmd + " bar-opacity " + Util.shellQuote(String(o)))
   }
 
+  // Keeps the taskbar's corner shape in step with the dock when the "Sync
+  // taskbar corners" setting is on. The configurator re-reads the dock's own
+  // cornerShape/cornerRadius from shell.json, so the pushed values stay exact
+  // even though only the shape picker triggers this. Purely user-driven, like
+  // syncBarOpacity(), so a shell.json write can never loop back into a write.
+  function syncBarCorners() {
+    if (!root.matchBarCorners) return
+    Util.execDetached(configCmd + " bar-corner")
+  }
+
   // Same references in the same order.
   function sameWindows(a, b) {
     if (a.length !== b.length) return false
@@ -814,6 +824,10 @@ Item {
   // no config-reactive binding here, so writes never feed back into the
   // reload loop.
   readonly property bool matchBarOpacity: flag("matchBarOpacity", false)
+  // When on, the taskbar's corner shape tracks the dock's cornerShape /
+  // cornerRadius (written as bar.cornerShape / bar.cornerRadius in
+  // shell.json). Same user-driven only pattern as matchBarOpacity.
+  readonly property bool matchBarCorners: flag("matchBarCorners", false)
   readonly property real iconOpacity: fraction("iconOpacity", 1.0)
 
   readonly property color glyphColor: root.config.glyphColor === "accent" ? Color.accent : Color.popups.text

@@ -78,9 +78,10 @@ Settings on the plugin entry:
 | `spacing`, `padding` | In the card |
 | `backgroundOpacity` | Card opacity (0–1) |
 | `matchBarOpacity` | Sync the taskbar background opacity to `backgroundOpacity` (default `false`). Installed automatically on first use (see below) |
+| `matchBarCorners` | Sync the taskbar's corner shape to the dock's (default `false`). Same automatic install (see below) |
 | `glyphScale` | Nerd Font glyph ink as a fraction of the slot |
 | `tiles`, `tileRadius`, `tileInset`, `tileOpacity` | Draw items as themed tiles |
-| `border`, `cornerRadius` | Card chrome |
+| `border`, `cornerShape`, `cornerRadius` | Card chrome — `cornerShape` is `"rounded"`/`"square"`/`"pill"`; `cornerRadius` (px) applies when rounded |
 | `glow` | Border glow halo (default `false`) |
 | `glowAmount` | Glow strength, 0–1 (default 0.5) |
 | `glowFocus` | `"full"` (default) owns the border, or `"bottom"` pushes the bloom onto the screen-edge side |
@@ -122,31 +123,38 @@ omarchy-dock-config add <json> [index]
 omarchy-dock-config set <key> <json>     # dock-level; null unsets
 omarchy-dock-config bar-opacity <n>      # taskbar opacity: 0.35 or 35
 omarchy-dock-config matchbar-opacity <true|false>
+omarchy-dock-config bar-corner             # re-mirror dock corner shape to taskbar
+omarchy-dock-config matchbar-corners <true|false>
 omarchy-dock-config ensure-bar           # idempotent taskbar support install
 ```
 
-### Sync taskbar opacity — automatic setup
+### Sync taskbar styling — automatic setup
 
-Turning on **"Sync taskbar opacity"** makes the taskbar's own background as
-opaque as the dock's `backgroundOpacity`. The dock writes that as
-`bar.backgroundOpacity` in `shell.json` — but only a taskbar that reads that
-key reacts, and stock `omarchy.bar` does not. So the first time the toggle
-(or `bar-opacity`) runs, the configurator installs the support itself:
+Turning on **"Sync taskbar opacity"** or **"Sync taskbar corners"** makes the
+taskbar mirror the dock: opacity as opaque as the dock's `backgroundOpacity`,
+corners shaped like the dock's `cornerShape` / `cornerRadius`. The dock writes
+those as `bar.backgroundOpacity` and `bar.cornerShape` / `bar.cornerRadius` in
+`shell.json` — but only a taskbar that reads them reacts, and stock
+`omarchy.bar` does not. So the first time a sync setting (or `bar-opacity`)
+runs, the configurator installs the support itself:
 
 1. If the active taskbar is the stock one, it clones it into
    `~/.config/omarchy/plugins/<user>.bar` and switches to it — the same
    `omarchy plugin clone` flow. (An existing clone is reused.)
-2. It adds a small `backgroundOpacity` property to that *user-owned* copy's
-   `Bar.qml`, verified against exact anchors, backed up to `Bar.qml.bak`, and
-   brace-checked; it refuses to touch an unrecognized bar rather than corrupt
-   it.
+2. It adds a small `backgroundOpacity` property and a `barCornerRadius`/
+   `setBarCorners()` pair to that *user-owned* copy's `Bar.qml`, verified
+   against exact anchors, backed up to `Bar.qml.bak`, and brace-checked; it
+   refuses to touch an unrecognized bar rather than corrupt it. Each piece is
+   added independently, so a clone that already has one feature just
+   backfills the other.
 3. It restarts the shell once so your cloned taskbar loads the new code with
    the setting applied.
 
-That first run needs the one restart; from then on the toggle and slider are
-instant. Nothing in the built-in taskbar is ever edited. You can run
-`omarchy-dock-config ensure-bar` by hand any time to check or re-run the
-install — it is idempotent and does nothing when support is already present.
+That first run needs the one restart; from then on the toggles, slider, and
+corner picker are instant. Nothing in the built-in taskbar is ever edited.
+You can run `omarchy-dock-config ensure-bar` by hand any time to check or
+re-run the install — it is idempotent and does nothing when support is
+already present.
 
 ## Development
 

@@ -264,6 +264,21 @@ PopupWindow {
         }
       }
 
+      Toggle {
+        id: matchBarCornersToggle
+        width: settings.contentWidth
+        label: "Sync taskbar corners"
+        description: "Give the taskbar the dock's corner shape (rounded, square or pill)."
+        checked: settings.dock.flag("matchBarCorners", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: {
+          var next = !settings.dock.flag("matchBarCorners", false)
+          Util.execDetached(settings.dock.configCmd
+            + " matchbar-corners " + (next ? "true" : "false"))
+        }
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.xs
@@ -496,6 +511,7 @@ PopupWindow {
           accent: Color.accent
           onChanged: function(v) {
             settings.dock.applySetting("cornerShape", JSON.stringify(String(v)))
+            settings.dock.syncBarCorners()
           }
         }
       }

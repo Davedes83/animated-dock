@@ -14,6 +14,7 @@
   "tileOpacity": 0.15,
   "border": true,
   "matchBarOpacity": false,
+  "matchBarCorners": false,
   "glow": false,
   "glowAmount": 0.5,
   "glowFocus": "full",
