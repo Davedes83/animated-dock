@@ -255,6 +255,9 @@ PopupWindow {
             color: rowHover.hovered ? Color.accent : Util.alpha(Color.popups.text, row.modelData.dim ? 0.6 : 1)
             font.family: Style.font.resolvedFamily
             font.pixelSize: Style.font.bodySmall
+            // Rows share the same label plumbing as the rich-text sink below,
+            // so keep glyphs plain too.
+            textFormat: Text.PlainText
           }
 
           Text {
@@ -267,6 +270,13 @@ PopupWindow {
             font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
             width: menu.rowWidth - x - Style.spacing.lg
+
+            // Window rows carry the compositor title (`wins[i].title`), which
+            // is remote/untrusted content — e.g. a browser tab name. Force
+            // plain text (mirroring the hover tooltip) so title markup can
+            // never reach the rich-text/resource-loading boundary via an
+            // injected <img src=…>; desktop-action names render the same way.
+            textFormat: Text.PlainText
           }
 
           HoverHandler { id: rowHover; enabled: !row.isSep }
