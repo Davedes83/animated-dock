@@ -40,8 +40,18 @@ ok() { printf '\033[32m ✓\033[0m %s\n' "$1"; }
 warn() { printf '\033[33m !\033[0m %s\n' "$1" >&2; }
 
 unlink_ours() {
-  local dest=$1
-  if [[ -L $dest && "$(readlink -f "$dest")" == "$REPO"* ]]; then
+  local dest=$1 base target
+  base=$(readlink -f "$REPO")
+  # A resolvable base is required; without it the "$base"/* pattern would
+  # degrade to /* and match anything. If the checkout itself is gone there
+  # is nothing this script can safely claim, so leave all links alone.
+  [[ -n $base ]] || return 0
+  target=$(readlink -f "$dest") 2>/dev/null
+  # Owned if it resolves to the repo root itself or to a path *under* it —
+  # boundary-aware so a sibling like "$REPO-old" is never matched. The bin
+  # and hypr links resolve to files inside the repo, hence the "$base/"*
+  # arm; a plain exact compare against $base would miss those.
+  if [[ -L $dest && -n $target && ( $target == "$base" || $target == "$base"/* ) ]]; then
     rm -f "$dest"
     ok "removed ${dest/#$HOME/\~}"
   elif [[ -e $dest ]]; then
