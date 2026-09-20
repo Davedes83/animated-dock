@@ -21,7 +21,13 @@ PLUGIN_DEST="$HOME/.config/omarchy/plugins/animated.dock"
 BIN_DEST="$HOME/.local/bin/omarchy-dock-config"
 HYPR_DEST="$HOME/.config/hypr/dock.lua"
 HYPRLAND_LUA="$HOME/.config/hypr/hyprland.lua"
+# The exact lines this installer writes into hyprland.lua, and the anchored
+# pattern used to detect them (and the legacy forms from older installs) so a
+# re-run never appends a duplicate. Matches lines *starting* with the require,
+# never unrelated require() calls elsewhere in the file.
+MINE_COMMENT='-- Blur and layer rules for the dock (see the AnimatedDock repo).'
 REQUIRE_LINE='pcall(require, "hypr.dock") -- AnimatedDock'
+REQUIRE_DETECT='^[[:space:]]*(pcall\(require, "hypr\.dock"\)( -- AnimatedDock)?|require\("hypr\.dock"\))([[:space:]]|$)'
 OMARCHY_PATH="${OMARCHY_PATH:-/usr/share/omarchy}"
 STAMP="$(date +%s)"
 
@@ -108,14 +114,13 @@ esac
 info "Wiring hypr/dock.lua into hyprland.lua"
 if [[ ! -f $HYPRLAND_LUA ]]; then
   warn "$HYPRLAND_LUA not found — add '$REQUIRE_LINE' to your Hyprland config by hand."
-elif grep -qF 'require("hypr.dock")' "$HYPRLAND_LUA"; then
+elif grep -Eq "$REQUIRE_DETECT" "$HYPRLAND_LUA"; then
   ok "hyprland.lua already requires hypr.dock"
 elif $DRY_RUN; then
   printf '   would append to hyprland.lua: %s\n' "$REQUIRE_LINE"
 else
   cp "$HYPRLAND_LUA" "$HYPRLAND_LUA.bak.$STAMP"
-  printf '\n-- Blur and layer rules for the dock (see the AnimatedDock repo).\n%s\n' \
-    "$REQUIRE_LINE" >>"$HYPRLAND_LUA"
+  printf '\n%s\n%s\n' "$MINE_COMMENT" "$REQUIRE_LINE" >>"$HYPRLAND_LUA"
   ok "appended require to hyprland.lua (backup: hyprland.lua.bak.$STAMP)"
 fi
 

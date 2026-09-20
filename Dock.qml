@@ -423,11 +423,24 @@ Item {
 
   readonly property bool active: displayItems.length > 0
 
+  // Evaluations run in a batched subprocess, one line of output per
+  // condition. The indices being evaluated are snapshotted when the run
+  // starts and every run carries a generation: a config reload (or a timer
+  // tick) that changes the set mid-run bumps the generation, and the
+  // completion handler drops any run whose snapshot is no longer current
+  // instead of mapping stale stdout onto a different item.
+  property int conditionGeneration: 0
+
   function evaluateConditions() {
     if (conditionIndices.length === 0) return
+    var idx = conditionIndices.slice()
+    conditionGeneration++
+    conditionProc.generation = conditionGeneration
+    conditionProc.pendingIndices = idx
+    conditionProc.pending = []
     var lines = []
-    for (var i = 0; i < conditionIndices.length; i++) {
-      var cmd = String(items[conditionIndices[i]].when)
+    for (var i = 0; i < idx.length; i++) {
+      var cmd = String(items[idx[i]].when)
       lines.push("if { " + cmd + " ; } >/dev/null 2>&1; then echo 1; else echo 0; fi")
     }
     conditionProc.command = ["bash", "-lc", lines.join("\n")]
@@ -438,6 +451,10 @@ Item {
 
   Process {
     id: conditionProc
+    // Snapshot of the items[] indices this run answers for, plus the
+    // generation of the evaluateConditions() call that started it.
+    property var pendingIndices: []
+    property int generation: 0
     property var pending: []
 
     stdout: SplitParser {
@@ -447,13 +464,17 @@ Item {
     }
 
     onRunningChanged: {
-      if (running) { conditionProc.pending = []; return }
-      for (var i = 0; i < conditionIndices.length; i++) {
+      if (running) return
+      // A newer evaluateConditions() superseded this run; its stdout maps to
+      // a previous item set and must not touch the current results.
+      if (conditionProc.generation !== root.conditionGeneration) return
+      var idx = conditionProc.pendingIndices
+      for (var i = 0; i < idx.length; i++) {
         var resolved = conditionProc.pending.length > i ? conditionProc.pending[i] : true
-        if (root.conditionResults[conditionIndices[i]] !== resolved) {
+        if (root.conditionResults[idx[i]] !== resolved) {
           var next = {}
           for (var k in root.conditionResults) next[k] = root.conditionResults[k]
-          next[conditionIndices[i]] = resolved
+          next[idx[i]] = resolved
           root.conditionResults = next
         }
       }
@@ -825,9 +846,13 @@ Item {
   readonly property int cardRadius: {
     if (cornerShape === "square") return 0
     if (cornerShape === "pill") return Math.max(1, Math.round(cardCross / 2))
-    return root.config.cornerRadius !== undefined
-      ? Style.space(num0("cornerRadius", 0))
-      : Style.cornerRadius
+    // `cornerRadius` is the current key; `radius` is the legacy spelling some
+    // configs seeded before the rename still carry. Neither set falls back to
+    // the theme rounding.
+    var explicit = root.config.cornerRadius !== undefined
+      ? num0("cornerRadius", 0)
+      : (root.config.radius !== undefined ? num0("radius", 0) : -1)
+    return explicit >= 0 ? Style.space(explicit) : Style.cornerRadius
   }
 
   // A cell's extent along the main axis.

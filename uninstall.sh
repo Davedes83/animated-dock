@@ -15,6 +15,12 @@ CFG="$HOME/.config/omarchy/shell.json"
 HYPRLAND_LUA="$HOME/.config/hypr/hyprland.lua"
 STAMP="$(date +%s)"
 
+# The exact lines install.sh writes, plus the legacy forms older installs left
+# behind. Removal is anchored so only our own lines are ever touched.
+MINE_COMMENT='-- Blur and layer rules for the dock (see the AnimatedDock repo).'
+REQUIRE_LINE='pcall(require, "hypr.dock") -- AnimatedDock'
+REQUIRE_DETECT='^[[:space:]]*(pcall\(require, "hypr\.dock"\)( -- AnimatedDock)?|require\("hypr\.dock"\))([[:space:]]|$)'
+
 PURGE_CONFIG=false
 for arg in "$@"; do
   case "$arg" in
@@ -47,10 +53,14 @@ unlink_ours "$HOME/.config/omarchy/plugins/animated.dock"
 unlink_ours "$HOME/.local/bin/omarchy-dock-config"
 unlink_ours "$HOME/.config/hypr/dock.lua"
 
-if [[ -f $HYPRLAND_LUA ]] && grep -qF 'require("hypr.dock")' "$HYPRLAND_LUA"; then
+if [[ -f $HYPRLAND_LUA ]] && grep -Eq "$REQUIRE_DETECT" "$HYPRLAND_LUA"; then
   cp "$HYPRLAND_LUA" "$HYPRLAND_LUA.bak.$STAMP"
-  # Drop the require and the comment line the installer wrote above it.
-  sed -i '/^-- Blur and layer rules for the dock/d; /require("hypr\.dock")/d' "$HYPRLAND_LUA"
+  # Drop only the exact comment and require lines the installer wrote (in the
+  # current or legacy forms) — never any other line that merely mentions
+  # require(...).
+  sed -E -i -e "/^-- Blur and layer rules for the dock (see the AnimatedDock repo)\.$/d" \
+    -e "/^pcall\(require, \"hypr\.dock\"\)( -- AnimatedDock)?$/d" \
+    -e "/^require\(\"hypr\.dock\"\)$/d" "$HYPRLAND_LUA"
   ok "removed the hypr.dock require (backup: hyprland.lua.bak.$STAMP)"
 fi
 

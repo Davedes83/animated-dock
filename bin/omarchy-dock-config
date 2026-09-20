@@ -29,6 +29,23 @@ require() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed."
 }
 
+# Serialize every read-modify-write of shell.json (and the taskbar patch that
+# can accompany a sync command). The staged tempfile below is atomic, but that
+# only protects a single writer: two concurrent invocations — sliders, toggles
+# and pin/unpin all fire separate processes — would each read the same old
+# file and the last writer would win, silently dropping the others. An
+# exclusive lock held for the whole command makes each invocation's read →
+# transform → validate → replace a single critical section. The fd is held for
+# the life of the process and released on exit. A leftover empty $CFG.lock
+# file is expected and harmless — the lock lives on the fd, not the file.
+LOCK="$CFG.lock"
+lock_config() {
+  require flock
+  mkdir -p "$(dirname -- "$CFG")"
+  exec 9>"$LOCK"
+  flock -x 9 || die "could not lock $LOCK"
+}
+
 # Write a mutated config atomically, but only if the result is still valid
 # JSON that keeps the dock entry intact. A broken shell.json costs you the
 # whole bar, not just the dock. Extra arguments are passed to jq, for
@@ -965,6 +982,11 @@ cmd_ensure_bar() {
 }
 
 if [[ $# -gt 0 ]]; then
+  # Read-only subcommands skip the write lock; everything else is serialized.
+  case $1 in
+    -h | --help | help | state) ;;
+    *) lock_config ;;
+  esac
   case $1 in
     pin)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_pin "${1:-}" "${2:-}" ;;
     unpin)    require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_unpin "${1:-}" ;;

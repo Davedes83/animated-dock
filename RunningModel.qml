@@ -14,8 +14,10 @@ import qs.Commons
 //   2. entry.startupClass  the desktop entry's StartupWMClass, when set
 //   3. the desktop id      the well-behaved case (org.gnome.Nautilus)
 //
-// Comparison is case-insensitive and also tries the last dot-segment each
-// way ("nautilus" vs "org.gnome.Nautilus"), because apps are sloppy here.
+// Comparison is case-insensitive. Exact strings always match; a tail match
+// ("nautilus" vs "org.gnome.Nautilus") is only tried when exactly one side is
+// unqualified, i.e. the window only reports a bare class, because apps are
+// sloppy here. Two fully-qualified ids never collide by last segment.
 //
 // The running section is *derived* state: grouped toplevels whose appId no
 // pinned item claims. It is never written to shell.json.
@@ -33,10 +35,18 @@ Item {
   // watchers below so the group binding re-evaluates.
   property int rev: 0
 
-  // Most-recently-used order, newest first, as toplevel references. Never
-  // pruned — closed windows just stop appearing in the live list this is
-  // intersected with.
+  // Most-recently-used order, newest first, as toplevel references. Pruned
+  // against the live toplevel set so closed windows' references don't
+  // accumulate through a long session; only live windows ever contribute to
+  // grouping/sorting order anyway.
   property var mru: []
+
+  // Drop entries for toplevels no longer mapped. Bounded by the live window
+  // count, so a long session can't accumulate stale references.
+  function pruneMru() {
+    var vals = ToplevelManager.toplevels.values || []
+    model.mru = model.mru.filter(function(t) { return vals.indexOf(t) >= 0 })
+  }
 
   Connections {
     target: ToplevelManager
@@ -47,7 +57,17 @@ Item {
       for (var i = 0; i < model.mru.length; i++)
         if (model.mru[i] !== t) next.push(model.mru[i])
       model.mru = next
+      model.pruneMru()
     }
+  }
+
+  // Windows can close without ever being active again, so also prune on a
+  // low-frequency timer rather than only when focus moves.
+  Timer {
+    interval: 30000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: model.pruneMru()
   }
 
   Instantiator {
@@ -62,12 +82,22 @@ Item {
   // ------------------------------------------------------------- matching
 
   function canon(s) { return String(s || "").toLowerCase() }
-  function tail(s) { var p = canon(s).split("."); return p[p.length - 1] }
 
+  // "org.gnome.Nautilus" vs "nautilus": exact always wins, and a tail match
+  // is only acceptable when exactly one side is bare — the window reported
+  // nothing but a class, so its full id is unavailable. Two qualified ids
+  // never match by last segment, so "foo.bar" cannot be grouped with an
+  // unrelated "bar" that happens to share a tail.
   function idMatch(a, b) {
     a = canon(a); b = canon(b)
     if (!a || !b) return false
-    return a === b || tail(a) === b || a === tail(b)
+    if (a === b) return true
+    var aDot = a.indexOf(".") >= 0
+    var bDot = b.indexOf(".") >= 0
+    if (aDot === bDot) return false
+    var long = aDot ? a : b
+    var short = aDot ? b : a
+    return long.slice(long.lastIndexOf(".") + 1) === short
   }
 
   function matchKeys(item) {
