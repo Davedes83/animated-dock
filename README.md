@@ -17,6 +17,13 @@ Running indic
 Right-click Omarchy menu opens the app's own context
 menu 
 
+Videos:
+
+https://youtu.be/LbPPyJSI1Dk?si=OWGd8sd5LZsrOqJ6
+
+V1.2 new features 
+https://youtu.be/fYIZ8h-PBu8?si=ceX1hQusIalt-ys2
+
 ## Requirements
 
 - Omarchy (Hyprland + the Quickshell-based `omarchy-shell`)
