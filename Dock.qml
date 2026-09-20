@@ -109,6 +109,30 @@ Item {
     return root.fallbackConfig
   }
 
+  // `omarchy plugin add` clones the repo but never runs install.sh (the one
+  // thing that resolved the per-user starter apps), so a brand-new shell.json
+  // entry lands with no `items` array: no pinned apps, and no Omarchy Menu
+  // icon — which is also the only right-click path to the Settings popup.
+  // Seed the starter set exactly once, in the background, as soon as the
+  // entry is known to lack one. The write goes through the configurator (the
+  // single writer for shell.json); the shell hot-reloads on save and the four
+  // default apps appear live. Deliberately leaving an empty pinned section
+  // (items: []) is respected — only a missing key is ever seeded.
+  property bool seedStarted: false
+
+  function maybeSeedDefaults() {
+    if (root.seedStarted) return
+    var c = root.config
+    if (!Util.isPlainObject(c) || String(c.id || "") !== root.pluginId) return
+    if (Array.isArray(c.items)) return
+    root.seedStarted = true
+    Util.execDetached(configCmd + " seed-defaults")
+  }
+
+  // Fires once the entry shows up, whether via shell.shellConfig or the
+  // FileView fallback; the seedStarted guard keeps it to one attempt.
+  onConfigChanged: root.maybeSeedDefaults()
+
   FileView {
     id: dockConfigFile
     path: root.homeDir + "/.config/omarchy/shell.json"

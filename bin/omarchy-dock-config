@@ -17,6 +17,12 @@ set -uo pipefail
 
 CFG="$HOME/.config/omarchy/shell.json"
 DOCK='(.plugins[] | select(.id=="animated.dock"))'
+# The plugin's own dir, resolved through any symlink (the configurator is
+# often linked into ~/.local/bin), so the bundled style defaults travel with
+# the script wherever it is invoked from.
+SELF="$(readlink -f -- "${BASH_SOURCE[0]}")" || SELF="${BASH_SOURCE[0]}"
+PLUGIN_ROOT="$(cd -- "$(dirname -- "$SELF")/.." && pwd)"
+DEFAULTS="$PLUGIN_ROOT/config/shell.dock.json"
 
 # ----------------------------------------------------------------- plumbing
 
@@ -210,9 +216,113 @@ cmd_add() {
   echo "added: $item"
 }
 
+# ------------------------------------------------- fresh-install default items
+#
+# `omarchy plugin add` clones the repo but never runs install.sh, so a board
+# start lands with a bare {"id":"animated.dock"} entry and no pinned items.
+# The dock calls `seed-defaults` on first load to give itself the starter set:
+# the Omarchy Menu, a file manager, the user's default terminal, and their
+# default browser — resolved from the user's own XDG/Omarchy defaults rather
+# than hardcoded, so the set matches the machine it lands on. Idempotent: an
+# entry that already carries an `items` key (even an empty one — the user
+# deliberately unpinned everything) is never touched.
+
+resolve_file_manager() {
+  local apps="/usr/share/applications:$HOME/.local/share/applications"
+  local cand
+  for cand in org.gnome.Nautilus org.kde.dolphin thunar nemo caja pcmanfm; do
+    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "org.gnome.Nautilus"
+}
+
+# Real desktop id (no .desktop suffix) for the user's default terminal.
+resolve_terminal() {
+  local id=""
+  id=$(xdg-terminal-exec --print-id 2>/dev/null || true)
+  id=${id%%:*}
+  id=${id%.desktop}
+  if [[ -n $id ]] && { [[ -f /usr/share/applications/$id.desktop ]] || [[ -f "$HOME/.local/share/applications/$id.desktop" ]]; }; then
+    echo "$id"
+    return
+  fi
+  # Omarchy's CLI reports a friendly label; map it back to a real desktop id.
+  id=$(omarchy-default-terminal 2>/dev/null || true)
+  case "$id" in
+    kitty) echo "kitty"; return ;;
+    foot) echo "foot"; return ;;
+    ghostty) echo "com.mitchellh.ghostty"; return ;;
+    alacritty)
+      [[ -f /usr/share/applications/org.alacritty.desktop ]] && { echo "org.alacritty"; return; }
+      echo "alacritty"; return
+      ;;
+  esac
+  local cand
+  for cand in kitty foot com.mitchellh.ghostty alacritty wezterm xfce4-terminal org.gnome.Terminal xterm; do
+    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "kitty"
+}
+
+# Real desktop id for the user's default browser; `xdg-settings` is the XDG
+# authority, with `$BROWSER` unset so it reports the xdg-config default.
+resolve_browser() {
+  local id=""
+  id=$(env -u BROWSER xdg-settings get default-web-browser 2>/dev/null || true)
+  id=${id%.desktop}
+  if [[ -n $id ]] && { [[ -f /usr/share/applications/$id.desktop ]] || [[ -f "$HOME/.local/share/applications/$id.desktop" ]]; }; then
+    echo "$id"
+    return
+  fi
+  local cand
+  for cand in firefox chromium google-chrome brave-browser microsoft-edge zen vivaldi-stable; do
+    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
+      echo "$cand"
+      return
+    fi
+  done
+  echo "firefox"
+}
+
+# The `items` array for a fresh dock, as JSON: Menu, Files, terminal, browser.
+default_items() {
+  jq -nc \
+    --arg fm "$(resolve_file_manager)" \
+    --arg term "$(resolve_terminal)" \
+    --arg browser "$(resolve_browser)" \
+    '[
+      { "showApps": true, "label": "Omarchy Menu", "tint": true },
+      { "desktop": $fm },
+      { "desktop": $term },
+      { "desktop": $browser }
+    ]'
+}
+
+# Merge the shipped style defaults (config/shell.dock.json) with the per-user
+# starter items and swap the whole entry in, one atomic validated write.
+cmd_seed_defaults() {
+  local dock items tmp
+  if jq -e "$DOCK | has(\"items\")" "$CFG" >/dev/null 2>&1; then
+    echo "seed-defaults: entry already has items — nothing to do"
+    return 0
+  fi
+  [[ -f $DEFAULTS ]] || die "seed-defaults: bundled defaults not found at $DEFAULTS"
+  items=$(default_items) || die "seed-defaults: could not resolve default apps"
+  dock=$(jq -c --argjson items "$items" '.items = $items' "$DEFAULTS") \
+    || die "seed-defaults: could not build the default dock entry."
+  apply '$dock' --argjson dock "$dock" || exit 1
+  echo "seeded the default dock items: $(echo "$items" | jq -c .)"
+}
+
 # Dock-level settings. Value is JSON, so numbers, bools and strings all
 # come through typed; "null" deletes the key so the built-in default rules
-# again.
+# apply again.
 cmd_set() {
   local key=$1 value=$2
   [[ $key =~ ^[a-zA-Z][a-zA-Z0-9]*$ ]] || die "usage: omarchy-dock-config set <key> <json-value>"
@@ -1005,6 +1115,7 @@ if [[ $# -gt 0 ]]; then
     glow-focus) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow_focus "${1:-}" ;;
     matchbar-glow) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_glow "${1:-}" ;;
     ensure-bar) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_ensure_bar ;;
+    seed-defaults) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_seed_defaults ;;
     state)    cmd_state ;;
     -h | --help | help)
       cat <<'EOF'
@@ -1036,6 +1147,8 @@ and the shell hot-reloads the change on save.
                        taskbar when "Sync taskbar glow" is on)
   matchbar-glow <true|false>  sync the taskbar's glow with the dock's
   ensure-bar                 install taskbar sync support (idempotent)
+  seed-defaults              seed the starter item set (Menu, files, default
+                       terminal and browser); no-op once items exist
   state                  print the plugin's entry
 
 The first time any sync setting runs, ensure-bar installs the small taskbar

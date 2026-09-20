@@ -28,9 +28,13 @@ menu
 omarchy plugin add https://github.com/Davedes83/animated-dock --enable
 ```
 
-That's the whole install: the repo root is the plugin. The dock appears with
-a starter set matched to your machine — the Omarchy Menu, a file manager,
-your default terminal, and your default browser — plus your running apps.
+That's the whole install: the repo root is the plugin. On its first run the
+dock seeds itself with a starter set matched to your machine — the Omarchy
+Menu, a file manager, your default terminal, and your default browser — plus
+your running apps. (`omarchy plugin add` only clones and enables the plugin,
+so this first-load seed is what plays the part install.sh plays in a checkout;
+`omarchy-dock-config seed-defaults` does the same by hand, and never touches
+an entry that already has items.)
 Two optional extras the plugin manager doesn't do:
 
 - **Blur behind the dock** — copy [hypr/dock.lua](hypr/dock.lua) to
@@ -154,6 +158,7 @@ omarchy-dock-config glow-amount <n>      # dock glow strength (0.5 or 50); also 
 omarchy-dock-config glow-focus <full|top|bottom>  # dock glow emphasis; also mirrors taskbar when sync is on
 omarchy-dock-config matchbar-glow <true|false>
 omarchy-dock-config ensure-bar           # idempotent taskbar support install
+omarchy-dock-config seed-defaults        # seed the starter items; no-op if items exist
 ```
 
 ### Sync taskbar styling — automatic setup
@@ -207,8 +212,9 @@ Edits to `shell.json` need none of this — the shell hot-reloads that on save.
 bin/        omarchy-dock-config, the programmatic configurator
 hypr/       dock.lua — blur and layer rules for Hyprland
 config/     shell.dock.json — the dock entry's style defaults for shell.json
-            (items are resolved per user at install: Menu, Files, the
-            default terminal and browser)
+            (the starter items — Menu, Files, the default terminal and
+            browser — are resolved per user by `omarchy-dock-config
+            seed-defaults`, which the dock runs on its first load)
 ```
 
 The heat is in `Dock.qml`: a 16 ms loop eases each cell's scale toward the
