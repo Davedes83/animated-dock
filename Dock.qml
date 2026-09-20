@@ -846,13 +846,13 @@ Item {
   readonly property int cardRadius: {
     if (cornerShape === "square") return 0
     if (cornerShape === "pill") return Math.max(1, Math.round(cardCross / 2))
-    // `cornerRadius` is the current key; `radius` is the legacy spelling some
-    // configs seeded before the rename still carry. Neither set falls back to
-    // the theme rounding.
-    var explicit = root.config.cornerRadius !== undefined
-      ? num0("cornerRadius", 0)
-      : (root.config.radius !== undefined ? num0("radius", 0) : -1)
-    return explicit >= 0 ? Style.space(explicit) : Style.cornerRadius
+    // An explicit cornerRadius overrides the theme rounding. `radius` is a
+    // dead key from the original seed config and is deliberately ignored —
+    // its bogus `100` value would clamp every card into a pill, making
+    // "rounded" indistinguishable from "pill".
+    return root.config.cornerRadius !== undefined
+      ? Style.space(num0("cornerRadius", 0))
+      : Style.cornerRadius
   }
 
   // A cell's extent along the main axis.

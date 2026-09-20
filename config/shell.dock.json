@@ -7,7 +7,6 @@
   "magnify": true,
   "spacing": 4,
   "padding": 8,
-  "cornerRadius": 100,
   "backgroundOpacity": 0.75,
   "iconOpacity": 1.0,
   "tiles": false,
