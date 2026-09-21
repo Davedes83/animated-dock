@@ -4,6 +4,7 @@
   "align": "center",
   "iconSize": 44,
   "zoom": 0.45,
+  "gaussianZoom": false,
   "magnify": true,
   "spacing": 4,
   "padding": 8,

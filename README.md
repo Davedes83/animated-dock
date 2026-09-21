@@ -7,7 +7,7 @@ Like the plugin? ♥️ it on the Omarchy Marketplace to help others find it.
 
 A fisheye dock for the Omarchy shell with macOS-style icon magnification, smooth animations, intelligent hide/reveal, window cycling, and full customization all in a Quickshell plugin.
 
-The core feature is the continuous magnifier: as your pointer moves, icons flow around it with a smooth quadratic scale falloff, anchored to stay under your cursor without chasing. From there it adds:
+The core feature is the continuous magnifier: as your pointer moves, icons flow around it with a smooth scale falloff, anchored to stay under your cursor without chasing. The falloff is a quadratic fishbowl by default (macOS-style), or a bell-curve Gaussian — pick the curve from the settings popup. From there it adds:
 
 Four edges with flexible positioning (start/center/end)
 Smart hide: pressure-reveal hotspot with dodge for overlapping windows
@@ -84,6 +84,7 @@ Settings on the plugin entry:
 | `align` | Placement along that edge: `"center"` (default), `"start"`, or `"end"` |
 | `iconSize` | Icon edge length in px |
 | `zoom` | Fisheye strength (0–1; 0.45 default) |
+| `gaussianZoom` | Use a bell-curve (Gaussian) falloff instead of the quadratic fishbowl (default false) |
 | `zoomRaise` | How much of its growth an icon lifts out of the bar (0.5 default) |
 | `magnify` | The continuous lens (default true) |
 | `animation` | Reflow animation length, ms (default 110) |
@@ -130,8 +131,8 @@ popup is grouped into five bold uppercase sections so it stays easy to scan
 as the dock grows:
 
 - **Appearance** — icon size, icon magnification (fisheye strength),
-  background opacity, corner shape, position, full length, and the border
-  toggle beside its opacity slider
+  the Gaussian-zoom curve toggle, background opacity, corner shape,
+  position, full length, and the border toggle beside its opacity slider
 - **Glow** — the border-glow toggle together with the strength slider and
   focus picker that it reveals
 - **Behaviour** — auto-hide and icon-name tooltips
@@ -226,10 +227,10 @@ config/     shell.dock.json — the dock entry's style defaults for shell.json
 ```
 
 The heat is in `Dock.qml`: a 16 ms loop eases each cell's scale toward the
-lens targets (narrow quadratic zoom about `pointerMain`, reported by each
-dock window's `HoverHandler`, mapped to row coordinates) while keeping
-positions, the card and the border frozen.  `DockItem.qml` places and
-dresses each cell.
+lens targets (a narrow quadratic or Gaussian zoom about `pointerMain`,
+reported by each dock window's `HoverHandler`, mapped to row coordinates)
+while keeping positions, the card and the border frozen.  `DockItem.qml`
+places and dresses each cell.
 `RunningModel.qml` derives the running section, `ContextMenu.qml` the
 right-click menu.
 

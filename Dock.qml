@@ -11,8 +11,9 @@ import qs.Ui
 //
 // The signature behaviour is the *continuous* magnifier: every pointer move
 // inside the dock re-flows the icons in a lens around the pointer (dash2dock
-// calls this the "magnify" animator). Each icon's scale is a quadratic
-// falloff from the pointer's position; the layout is anchored on the most
+// calls this the "magnify" animator). Each icon's scale is a falloff from
+// the pointer's position — quadratic by default, or a bell-curve Gaussian
+// with `gaussianZoom`; the layout is anchored on the most
 // magnified icon so the pointer never chases a target, and the icons lift
 // out of the dock as they grow. The flow animates through Behaviour
 // bindings rather than a manual loop, so a stationary pointer settles and a
@@ -222,6 +223,9 @@ Item {
 
   // Fisheye tunables.
   readonly property real zoom: fraction("zoom", 0.45)
+  // Bell-curve lens: swap the quadratic fishbowl falloff for a Gaussian
+  // one (scale = 1 + zoom·e^(−d²/2σ²)).
+  readonly property bool gaussianZoom: flag("gaussianZoom", false)
   // How much of its growth an icon "lifts" out of the bar (dash2dock
   // ANIM_ICON_RAISE is 0.5).
   readonly property real zoomRaise: fraction("zoomRaise", 0.5)
@@ -630,14 +634,17 @@ Item {
   // its own row, and every row is laid out identically, so the number is
   // shared). From that position each cell gets a scale:
   //
-  //     scale = 1 + zoom * p²,   p = 1 - |distance| / T
+  //     quadratic:  scale = 1 + zoom * p²,   p = 1 - |distance| / T
+  //     gaussian:   scale = 1 + zoom * e^(−|distance|² / 2σ²)
   //
-  // a quadratic falloff out to T ≈ 2.2 slots. The layout is anchored on the
-  // most magnified cell — it keeps its resting centre — and each neighbour
-  // is pushed away by half its own grown extent plus the gap, so no two
-  // icons ever overlap. When the pointer leaves, the same bindings that
-  // draped the icons out fold them back, animated by the Behaviour on each
-  // cell.
+  // the quadratic a falloff out to T ≈ 2.2 slots (σ = T/3 for the Gaussian,
+  // so its effective reach matches T and the two look equivalent — it has
+  // no hard edge, so cells past the reach are clamped to scale 1). The
+  // layout is anchored on the most magnified cell — it keeps its resting
+  // centre — and each neighbour is pushed away by half its own grown extent
+  // plus the gap, so no two icons ever overlap. When the pointer leaves, the
+  // same bindings that draped the icons out fold them back, animated by the
+  // Behaviour on each cell.
 
   property real pointerMain: 0
   property bool pointerInside: false
@@ -712,6 +719,10 @@ Item {
 
     var centers = baseCenters
     var T = slot * 1.9
+    // Gaussian width: σ = T/3 puts the falloff at ~1.1% of its peak when a
+    // cell's centre sits on the quadratic's cut-off distance, so the bell
+    // curve's asymptotic tail wears out inside the same reach.
+    var sigma = T / 3
     var boost = zoom
     var scales = new Array(n)
     var i
@@ -720,11 +731,19 @@ Item {
       if (Util.isPlainObject(it) && (it.spacer === true || it.__divider === true)) { scales[i] = 1; continue }
       if (!centers[i]) { scales[i] = 1; continue }
       var d = Math.abs(root.pointerMain - centers[i])
-      var p = 1.0 - d / T
       var s = 1
-      if (p > 0) {
-        s = 1 + boost * p * p   // quadratic fishbowl, macOS-style
-        if (s < 1) s = 1
+      if (gaussianZoom) {
+        // Bell-curve falloff (Wikipedia: f(x) = a·e^(−(x−b)²/2c²)); the
+        // centre and peak are the pointer and zoom, so this is
+        // scale = 1 + zoom·e^(−d²/2σ²). Cells past the reach clamp to 1.
+        var g = Math.exp(-(d * d) / (2 * sigma * sigma))
+        if (g > 0.01) s = 1 + boost * g
+      } else {
+        var p = 1.0 - d / T
+        if (p > 0) {
+          s = 1 + boost * p * p   // quadratic fishbowl, macOS-style
+          if (s < 1) s = 1
+        }
       }
       scales[i] = s
     }

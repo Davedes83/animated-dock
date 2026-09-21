@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "animated.dock",
   "name": "Animated Dock",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "davedes",
   "description": "Fisheye-magnifying animated dock for the Omarchy shell, functionally equivalent to dash2dock-lite: continuous pointer magnification, intelli-hide autohide, four edge positions, scroll-to-cycle windows, drag-to-reorder, running indicators and icon tinting.",
   "kinds": [

@@ -13,7 +13,8 @@ import qs.Ui
 // Appearance, Glow, Behaviour, Taskbar sync, Support — each toggle sitting
 // with its dependent control. The appearance section pairs the icon-size and
 // magnification sliders, whose maxima are what the dock reserves window room
-// for while this popup is open. Every control writes through the bundled
+// for while this popup is open, with the Gaussian-zoom curve toggle. Every
+// control writes through the bundled
 // configurator (the `set` subcommand or the atomic `opacity` /
 // `corner-shape` / `glow`-family pushes that mirror the taskbar in the same
 // write), and the shell hot-reloads shell.json on save, so changes land live.
@@ -283,6 +284,17 @@ PopupWindow {
             settings.dock.applySetting("zoom", String(v / 100))
           }
         }
+      }
+
+      Toggle {
+        id: gaussianToggle
+        width: settings.contentWidth
+        label: "Gaussian zoom"
+        description: "Bell-curve falloff instead of the quadratic fishbowl."
+        checked: settings.dock.flag("gaussianZoom", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onClicked: settings.dock.applySetting("gaussianZoom", String(!settings.dock.flag("gaussianZoom", false)))
       }
 
       Column {

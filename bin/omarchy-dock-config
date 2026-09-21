@@ -1159,7 +1159,8 @@ omarchy.bar is first cloned into your plugins, exactly like `omarchy plugin
 clone`).
 
 Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
-magnify, animation, spacing, padding, backgroundOpacity, glyphScale,
+magnify, gaussianZoom, animation, spacing, padding, backgroundOpacity,
+glyphScale,
 tiles, tileRadius, tileInset, tileOpacity, border, borderOpacity, cornerRadius,
 cornerShape, glow, glowAmount, glowFocus, autohide, dodge, pressure,
 revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
