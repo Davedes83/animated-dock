@@ -83,8 +83,8 @@ Settings on the plugin entry:
 | `edge` | Screen edge: `"bottom"` (default), `"top"`, `"left"`, or `"right"` — left/right give a vertical dock |
 | `align` | Placement along that edge: `"center"` (default), `"start"`, or `"end"` |
 | `iconSize` | Icon edge length in px |
-| `zoom` | Fisheye strength (0–1; 0.45 default) |
-| `gaussianZoom` | Use a bell-curve (Gaussian) falloff instead of the quadratic fishbowl (default false) |
+| `zoom` | Fisheye strength (0–1; 0.48 default) |
+| `gaussianZoom` | Use a bell-curve (Gaussian) falloff instead of the quadratic fishbowl (default true) |
 | `zoomRaise` | How much of its growth an icon lifts out of the bar (0.5 default) |
 | `magnify` | The continuous lens (default true) |
 | `animation` | Reflow animation length, ms (default 110) |

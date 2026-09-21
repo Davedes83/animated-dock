@@ -277,7 +277,7 @@ PopupWindow {
           maximum: 100
           step: 5
           integer: true
-          value: Math.round(settings.dock.fraction("zoom", 0.45) * 100)
+          value: Math.round(settings.dock.fraction("zoom", 0.48) * 100)
           fillColor: Color.accent
           knobColor: Color.accent
           onReleased: function(v) {
@@ -291,10 +291,10 @@ PopupWindow {
         width: settings.contentWidth
         label: "Gaussian zoom"
         description: "Bell-curve falloff instead of the quadratic fishbowl."
-        checked: settings.dock.flag("gaussianZoom", false)
+        checked: settings.dock.flag("gaussianZoom", true)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("gaussianZoom", String(!settings.dock.flag("gaussianZoom", false)))
+        onClicked: settings.dock.applySetting("gaussianZoom", String(!settings.dock.flag("gaussianZoom", true)))
       }
 
       Column {

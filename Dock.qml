@@ -35,7 +35,7 @@ import qs.Ui
 //
 //   {
 //     "id": "animated.dock",
-//     "edge": "bottom", "align": "center", "iconSize": 44, "zoom": 0.45,
+//     "edge": "bottom", "align": "center", "iconSize": 44, "zoom": 0.48,
 //     "magnify": true, "spacing": 4, "padding": 8,
 //     "autohide": true, "dodge": true, "pressure": true,
 //     "border": true, "borderOpacity": 1.0, "glow": false,
@@ -222,10 +222,10 @@ Item {
   readonly property int hideDelay: Math.round(num("hideDelay", 300))
 
   // Fisheye tunables.
-  readonly property real zoom: fraction("zoom", 0.45)
+  readonly property real zoom: fraction("zoom", 0.48)
   // Bell-curve lens: swap the quadratic fishbowl falloff for a Gaussian
   // one (scale = 1 + zoom·e^(−d²/2σ²)).
-  readonly property bool gaussianZoom: flag("gaussianZoom", false)
+  readonly property bool gaussianZoom: flag("gaussianZoom", true)
   // How much of its growth an icon "lifts" out of the bar (dash2dock
   // ANIM_ICON_RAISE is 0.5).
   readonly property real zoomRaise: fraction("zoomRaise", 0.5)
