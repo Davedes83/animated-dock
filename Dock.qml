@@ -915,15 +915,20 @@ Item {
   // plus slack for a label centred on an end icon to spill into.
   //
   // While the settings popup is open, both axes keep the slack they would
-  // need at the slider's largest icon size. The card stays pinned to the
-  // edge/alignment (bottom, centred), so the extras are invisible click-
+  // need at the slider's largest icon size, and the cross axis the slack
+  // for the magnification slider's maximum too. The card stays pinned to
+  // the edge/alignment (bottom, centred), so the extras are invisible click-
   // through strips, but the window itself never re-sizes while a control is
   // live. That matters: an xdg-popup child of a resizing window is re-
   // anchored by the compositor over several frames, and the border of the
   // popup is what shows that churn as a ghost. With the window frozen the
   // popup map is never disturbed.
   readonly property int iconSizeMax: 96
-  function windowAxesAt(sv) {
+  // The magnification slider's maximum. fraction() already clamps zoom at 1,
+  // so this always covers the headroom the cross axis may need while the
+  // settings popup is open.
+  readonly property real zoomMax: 1.0
+  function windowAxesAt(sv, z) {
     var total = 0
     var list = displayItems
     var n = list.length
@@ -934,7 +939,7 @@ Item {
     total += Math.max(0, n - 1) * gap
     var cardMain = Border.left(dockBorder) + pad + total + pad + Border.right(dockBorder)
     var cardCross = Border.top(dockBorder) + pad + sv + pad + Border.bottom(dockBorder)
-    var zoomOverflow = Math.round(sv * zoom * (0.5 + zoomRaise)) + Style.space(4)
+    var zoomOverflow = Math.round(sv * z * (0.5 + zoomRaise)) + Style.space(4)
     var labelBand = !labels ? zoomOverflow
       : vertical ? Style.space(220) + Style.spacing.sm + zoomOverflow
                  : labelHeight + Style.spacing.sm + zoomOverflow
@@ -943,8 +948,8 @@ Item {
       cross: Math.round(labelBand + cardCross + edgeGap)
     }
   }
-  readonly property int reserveMain: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax)).main - windowAxesAt(root.slot).main) : 0
-  readonly property int reserveCross: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax)).cross - windowAxesAt(root.slot).cross) : 0
+  readonly property int reserveMain: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax), root.zoom).main - windowAxesAt(root.slot, root.zoom).main) : 0
+  readonly property int reserveCross: settingsOpen ? Math.max(0, windowAxesAt(Style.space(iconSizeMax), root.zoomMax).cross - windowAxesAt(root.slot, root.zoom).cross) : 0
   readonly property int windowCross: labelBand + cardCross + edgeGap + glowCrossExtra
   // Glow room rides along on the main axis too (whichever flanks need it).
   readonly property int windowMain: cardMain + (labels && !vertical ? Style.space(240) : 0) + glowMainExtra

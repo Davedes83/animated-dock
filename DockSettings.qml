@@ -11,7 +11,9 @@ import qs.Ui
 // and the dock, so clicking anywhere else clears the grab and the popup
 // closes. Controls are grouped under five uppercase section headers —
 // Appearance, Glow, Behaviour, Taskbar sync, Support — each toggle sitting
-// with its dependent control. Every control writes through the bundled
+// with its dependent control. The appearance section pairs the icon-size and
+// magnification sliders, whose maxima are what the dock reserves window room
+// for while this popup is open. Every control writes through the bundled
 // configurator (the `set` subcommand or the atomic `opacity` /
 // `corner-shape` / `glow`-family pushes that mirror the taskbar in the same
 // write), and the shell hot-reloads shell.json on save, so changes land live.
@@ -238,6 +240,47 @@ PopupWindow {
           knobColor: Color.accent
           onReleased: function(v) {
             settings.dock.applySetting("iconSize", String(Math.round(v)))
+          }
+        }
+      }
+
+      Column {
+        width: settings.contentWidth
+        spacing: Style.spacing.xs
+
+        Row {
+          width: settings.contentWidth
+          spacing: Style.spacing.md
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Icon magnification"
+            color: Color.popups.text
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: String(Math.round(zoomSlider.liveValue)) + "%"
+            color: Util.alpha(Color.popups.text, 0.6)
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        DragSlider {
+          id: zoomSlider
+          width: settings.contentWidth
+          minimum: 0
+          maximum: 100
+          step: 5
+          integer: true
+          value: Math.round(settings.dock.fraction("zoom", 0.45) * 100)
+          fillColor: Color.accent
+          knobColor: Color.accent
+          onReleased: function(v) {
+            settings.dock.applySetting("zoom", String(v / 100))
           }
         }
       }

@@ -129,8 +129,9 @@ Right-click the dock and pick **Settings** to edit everything visually. The
 popup is grouped into five bold uppercase sections so it stays easy to scan
 as the dock grows:
 
-- **Appearance** — icon size, background opacity, corner shape, position,
-  full length, and the border toggle beside its opacity slider
+- **Appearance** — icon size, icon magnification (fisheye strength),
+  background opacity, corner shape, position, full length, and the border
+  toggle beside its opacity slider
 - **Glow** — the border-glow toggle together with the strength slider and
   focus picker that it reveals
 - **Behaviour** — auto-hide and icon-name tooltips
