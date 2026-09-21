@@ -1482,8 +1482,13 @@ Item {
 
       readonly property string screenName: String(modelData.name || "")
 
-      // Asks about the workspace on *this* output, not the focused one.
-      readonly property bool pinnedOpen: root.showWhenEmpty && root.screenEmpty(screenName)
+      // Asks about the workspace on *this* output, not the focused one. The
+      // pin only applies to the monitor being used: with several monitors an
+      // idle secondary output still auto-hides under its own empty workspace,
+      // while the empty workspace you actually engage keeps its launcher up.
+      readonly property bool pinnedOpen: root.showWhenEmpty
+        && root.screenEmpty(screenName)
+        && (root.targetScreen === "" || root.targetScreen === screenName)
 
       // With several monitors the dock appears only on the one being asked
       // for; the empty-target case means we could not tell, so show it here

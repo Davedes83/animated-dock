@@ -104,7 +104,7 @@ Settings on the plugin entry:
 | `pressure` | Reveal delay collapses to zero on the edge hotspot (default true) |
 | `revealDelay`, `hideDelay` | Hover-in and hover-out delays, ms |
 | `hotspotFullWidth`, `hotspotHeight` | Size of the trigger zone on the edge |
-| `showWhenEmpty` | Keep the card up on empty workspaces |
+| `showWhenEmpty` | Keep the card up on empty workspaces — on the monitor in use only, so idle secondary monitors still auto-hide |
 | `runningIndicator` | `"dot"` (default), `"line"`, or `"none"` |
 | `showRunning` | The running-apps section (default true) |
 | `labels` | Label pill beside the hovered item (default true) |
