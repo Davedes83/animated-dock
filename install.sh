@@ -68,7 +68,8 @@ run() {
 
 # Point $2 at $1, moving anything real that is already there out of the way.
 # A link that already resolves to the right place is left untouched so the
-# script stays quiet on re-runs.
+# script stays quiet on re-runs. Under --dry-run nothing is claimed to have
+# happened: the messages say what *would* happen.
 link() {
   local src=$1 dest=$2
 
@@ -77,20 +78,28 @@ link() {
       ok "${dest/#$HOME/\~} already linked"
       return
     fi
+    $DRY_RUN && printf '   would replace %s -> %s\n' "${dest/#$HOME/\~}" "${src/#$HOME/\~}"
     run rm -f "$dest"
   elif [[ -e $dest ]]; then
-    run mv "$dest" "$dest.bak.$STAMP"
-    warn "moved existing ${dest##*/} aside to ${dest##*/}.bak.$STAMP"
+    if $DRY_RUN; then
+      printf '   would move %s aside to %s\n' "${dest##*/}" "${dest##*/}.bak.$STAMP"
+    else
+      run mv "$dest" "$dest.bak.$STAMP"
+      warn "moved existing ${dest##*/} aside to ${dest##*/}.bak.$STAMP"
+    fi
   fi
 
   run mkdir -p "$(dirname -- "$dest")"
   run ln -sfn "$src" "$dest"
-  ok "${dest/#$HOME/\~} → ${src/#$HOME/\~}"
+  $DRY_RUN || ok "${dest/#$HOME/\~} → ${src/#$HOME/\~}"
 }
 
 # ------------------------------------------------------------ prerequisites
 
 command -v jq >/dev/null 2>&1 || die "jq is required but not installed."
+command -v flock >/dev/null 2>&1 || die "flock (util-linux) is required but not installed."
+[[ -x $REPO/bin/omarchy-dock-config ]] ||
+  die "$REPO/bin/omarchy-dock-config is not executable (chmod +x it)."
 [[ -d $OMARCHY_PATH ]] || warn "$OMARCHY_PATH not found — is this an Omarchy system?"
 
 # ------------------------------------------------------------------- files
@@ -102,7 +111,7 @@ link "$REPO/hypr/dock.lua" "$HYPR_DEST"
 
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) ;;
-  *) warn "~/.local/bin is not on PATH — omarchy-dock-config will not be callable by name." ;;
+  *) warn "$HOME/.local/bin is not on PATH — omarchy-dock-config will not be callable by name." ;;
 esac
 
 # ------------------------------------------------------- hyprland.lua wiring
@@ -129,85 +138,14 @@ fi
 # A brand-new dock starts with the four essentials — the Omarchy Menu, a file
 # manager, the user's default terminal, and their default browser — so it is
 # usable the moment it appears and everything else is one right-click away
-# (Unpin, pin running apps). Terminal/browser are resolved from the user's own
-# XDG/Omarchy defaults rather than hardcoded, so the seeded set matches the
-# machine it lands on.
+# (Unpin, pin running apps). The starters come from the configurator's
+# `default-items` subcommand rather than a second copy of the resolvers here:
+# they resolve the user's own XDG/Omarchy defaults rather than hardcoding, and
+# two copies of that logic is two copies to keep in step. It needs no
+# shell.json, so it works before the entry exists.
 
-resolve_file_manager() {
-  local apps="/usr/share/applications:$HOME/.local/share/applications"
-  local cand
-  for cand in org.gnome.Nautilus org.kde.dolphin thunar nemo caja pcmanfm; do
-    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
-      echo "$cand"
-      return
-    fi
-  done
-  echo "org.gnome.Nautilus"
-}
-
-# Real desktop id (no .desktop suffix) for the user's default terminal.
-resolve_terminal() {
-  local id=""
-  id=$(xdg-terminal-exec --print-id 2>/dev/null || true)
-  id=${id%%:*}
-  id=${id%.desktop}
-  if [[ -n $id ]] && { [[ -f /usr/share/applications/$id.desktop ]] || [[ -f "$HOME/.local/share/applications/$id.desktop" ]]; }; then
-    echo "$id"
-    return
-  fi
-  # Omarchy's CLI reports a friendly label; map it back to a real desktop id.
-  id=$(omarchy-default-terminal 2>/dev/null || true)
-  case "$id" in
-    kitty) echo "kitty"; return ;;
-    foot) echo "foot"; return ;;
-    ghostty) echo "com.mitchellh.ghostty"; return ;;
-    alacritty)
-      [[ -f /usr/share/applications/org.alacritty.desktop ]] && { echo "org.alacritty"; return; }
-      echo "alacritty"; return
-      ;;
-  esac
-  local cand
-  for cand in kitty foot com.mitchellh.ghostty alacritty wezterm xfce4-terminal org.gnome.Terminal xterm; do
-    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
-      echo "$cand"
-      return
-    fi
-  done
-  echo "kitty"
-}
-
-# Real desktop id for the user's default browser; `xdg-settings` is the XDG
-# authority, with `$BROWSER` unset so it reports the xdg-config default.
-resolve_browser() {
-  local id=""
-  id=$(env -u BROWSER xdg-settings get default-web-browser 2>/dev/null || true)
-  id=${id%.desktop}
-  if [[ -n $id ]] && { [[ -f /usr/share/applications/$id.desktop ]] || [[ -f "$HOME/.local/share/applications/$id.desktop" ]]; }; then
-    echo "$id"
-    return
-  fi
-  local cand
-  for cand in firefox chromium google-chrome brave-browser microsoft-edge zen vivaldi-stable; do
-    if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
-      echo "$cand"
-      return
-    fi
-  done
-  echo "firefox"
-}
-
-# The `items` array for a fresh dock, as JSON: Menu, Files, terminal, browser.
 default_items() {
-  jq -nc \
-    --arg fm "$(resolve_file_manager)" \
-    --arg term "$(resolve_terminal)" \
-    --arg browser "$(resolve_browser)" \
-    '[
-      { "showApps": true, "label": "Omarchy Menu", "tint": true },
-      { "desktop": $fm },
-      { "desktop": $term },
-      { "desktop": $browser }
-    ]'
+  "$REPO/bin/omarchy-dock-config" default-items
 }
 
 # --------------------------------------------------------------- shell.json
@@ -237,6 +175,10 @@ fi
 seed_config() {
   local tmp dock
   tmp=$(mktemp "$CFG.XXXXXX") || die "could not stage a shell.json update."
+  # The staged file inherits shell.json's own permissions: mktemp hands back a
+  # 0600 tempfile, and moving that into place would quietly tighten the mode
+  # of a file the whole shell reads.
+  chmod --reference="$CFG" -- "$tmp" 2>/dev/null || true
 
   # The dock entry's style keys stay the repo's defaults from
   # config/shell.dock.json; only `items` is swapped for the per-user set.
@@ -286,8 +228,14 @@ if ! $DRY_RUN; then
       warn "could not reach the shell — run 'omarchy restart shell' when it is up."
   fi
   if command -v hyprctl >/dev/null 2>&1 && [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
-    hyprctl reload >/dev/null && ok "hyprland reloaded"
-    errors=$(hyprctl configerrors 2>/dev/null)
+    # `|| warn` rather than `&& ok`: under `set -e` a bare failing command
+    # aborts the script, and a hiccup here should not skip the rest.
+    if hyprctl reload >/dev/null 2>&1; then
+      ok "hyprland reloaded"
+    else
+      warn "could not reload hyprland — run 'hyprctl reload' yourself."
+    fi
+    errors=$(hyprctl configerrors 2>/dev/null || true)
     [[ $errors == "no errors" || -z $errors ]] || warn "hyprctl configerrors: $errors"
   fi
 fi

@@ -7,15 +7,21 @@ Like the plugin? ♥️ it on the Omarchy Marketplace to help others find it.
 
 A fisheye dock for the Omarchy shell with macOS-style icon magnification, smooth animations, intelligent hide/reveal, window cycling, and full customization all in a Quickshell plugin.
 
-The core feature is the continuous magnifier: as your pointer moves, icons flow around it with a smooth scale falloff, anchored to stay under your cursor without chasing. The falloff is a quadratic fishbowl by default (macOS-style), or a bell-curve Gaussian — pick the curve from the settings popup. From there it adds:
+The core feature is the continuous magnifier: as your pointer moves, icons scale up
+around the pointer with a smooth falloff, held under your cursor without chasing it.
+The falloff is a bell-curve Gaussian by default, or the quadratic fishbowl macOS
+uses — pick the curve from the settings popup. From there it adds:
 
-Four edges with flexible positioning (start/center/end)
-Smart hide: pressure-reveal hotspot with dodge for overlapping windows
-Window controls: scroll to cycle through windows, click to minimize/focus/launch
-Running indic
-
-Right-click Omarchy menu opens the app's own context
-menu 
+- **Four edges** with flexible positioning (start / center / end), optionally full length
+- **Smart hide**: a pressure-reveal hotspot, plus intelli-hide from windows that
+  overlap the dock
+- **Window controls**: scroll to cycle an app's windows, click to minimize / focus /
+  launch, middle-click (or Ctrl-click) for a new window
+- **Running indicators**, a running-apps section, and per-app window counts
+- **Drag to reorder**, and drag a running app across the divider to pin it
+- **Hover labels**, themed tiles, icon tinting / monochrome, and a border glow
+- **Taskbar sync**: mirror the dock's opacity, corner shape and border glow onto the
+  Omarchy taskbar
 
 Videos:
 
@@ -28,6 +34,9 @@ https://youtu.be/fYIZ8h-PBu8?si=ceX1hQusIalt-ys2
 
 - Omarchy (Hyprland + the Quickshell-based `omarchy-shell`)
 - `jq` — used by the configurator
+- `flock` (util-linux) — serialises the configurator's writes to shell.json
+- `python3` — only if you turn on a taskbar-sync setting, which patches your own
+  copy of the taskbar (see [Sync taskbar styling](#sync-taskbar-styling--automatic-setup))
 
 ## Install
 
@@ -126,9 +135,9 @@ Item forms in `items[]`:
 
 ### Settings popup
 
-Right-click the dock and pick **Settings** to edit everything visually. The
-popup is grouped into five bold uppercase sections so it stays easy to scan
-as the dock grows:
+Right-click the dock and pick **Settings** to edit the everyday options
+visually. The popup is grouped into five uppercase sections so it stays easy
+to scan as the dock grows:
 
 - **Appearance** — icon size, icon magnification (fisheye strength),
   the Gaussian-zoom curve toggle, background opacity, corner shape,
@@ -143,11 +152,21 @@ Every control writes through the configurator, so changes apply instantly,
 and the sync toggles auto-install taskbar support the first time they are
 used (see below).
 
+The popup deliberately covers the settings you reach for, not every setting
+the dock understands. The finer ones — `align`, `spacing`, `padding`,
+`edgeGap`, `dodge`, `showRunning`, `runningIndicator`, `monochrome`,
+`tintIcons` / `tintRunning`, `tiles` and friends, `zoomRaise`,
+`revealDelay` / `hideDelay`, `hotspotHeight` / `hotspotFullWidth`,
+`glyphScale`, `glyphColor` — are the table's keys, set with
+`omarchy-dock-config set <key> <json>`.
+
 ### Programmatic CLI
 
 The pin badge, context menu, and drag-to-reorder all persist through
 `omarchy-dock-config` subcommands — one validated writer for shell.json
-(indices 0-based):
+(indices 0-based). Every write is atomic and takes a lock, and the previous
+state is kept at `shell.json.bak` with a short rolling history beside it
+(`shell.json.bak.<stamp>`, newest five), so a bad edit is always recoverable:
 
 ```
 omarchy-dock-config pin <appId> [index]
@@ -168,7 +187,11 @@ omarchy-dock-config glow-focus <full|top|bottom>  # dock glow emphasis; also mir
 omarchy-dock-config matchbar-glow <true|false>
 omarchy-dock-config ensure-bar           # idempotent taskbar support install
 omarchy-dock-config seed-defaults        # seed the starter items; no-op if items exist
+omarchy-dock-config default-items        # print the starter items; changes nothing
 ```
+
+`set` only accepts keys the dock actually reads — a typo is an error, not a
+dead key in shell.json.
 
 ### Sync taskbar styling — automatic setup
 
@@ -213,12 +236,27 @@ omarchy-shell shell rescanPlugins      # or: omarchy restart shell
 
 Edits to `shell.json` need none of this — the shell hot-reloads that on save.
 
+The configurator is the only writer of `shell.json`, so it is the part with
+tests. They run against a throwaway `$HOME` with a synthetic config and assert
+on the results: the right keys change, everything else is left alone, the file
+stays valid JSON with its permissions intact, and a rejected input changes
+nothing.
+
+```bash
+./tests/config-test.sh
+```
+
+CI additionally runs `shellcheck` and `shfmt -i 2 -ci` over the shell scripts,
+validates the JSON, and checks that the manifest's entry point exists and that
+every key the configurator accepts is one the dock actually reads.
+
 ## Layout
 
 ```
 ./          the shell plugin itself (manifest.json + Dock.qml at the root,
             so the repo installs directly via `omarchy plugin add`)
 bin/        omarchy-dock-config, the programmatic configurator
+tests/      config-test.sh — behaviour tests for the configurator
 hypr/       dock.lua — blur and layer rules for Hyprland
 config/     shell.dock.json — the dock entry's style defaults for shell.json
             (the starter items — Menu, Files, the default terminal and

@@ -17,6 +17,20 @@ set -uo pipefail
 
 CFG="$HOME/.config/omarchy/shell.json"
 DOCK='(.plugins[] | select(.id=="animated.dock"))'
+
+# Every dock-level key the plugin reads, and the keys it exists only to feed
+# the taskbar-sync subcommands. `set` refuses anything outside this list, so a
+# typo fails loudly instead of quietly parking a dead key in shell.json, which
+# is the only place the dock's settings live and which the whole shell reads.
+# The --help output prints this same list, so the two cannot drift.
+KNOWN_KEYS=(
+  align animation autohide backgroundOpacity border borderOpacity cornerRadius
+  cornerShape dodge edge edgeGap fullWidth gaussianZoom glyphColor glyphScale
+  hideDelay hotspotFullWidth hotspotHeight iconOpacity iconSize labels magnify
+  matchBarCorners matchBarGlow matchBarOpacity monochrome padding pressure
+  revealDelay runningIndicator showRunning showWhenEmpty spacing tileInset
+  tileOpacity tileRadius tiles tintIcons tintRunning tooltips zoom zoomRaise
+)
 # The plugin's own dir, resolved through any symlink (the configurator is
 # often linked into ~/.local/bin), so the bundled style defaults travel with
 # the script wherever it is invoked from.
@@ -33,6 +47,44 @@ die() {
 
 require() {
   command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed."
+}
+
+# True when $1 is a key the dock reads. Used by `set` so a typo is an error
+# instead of a dead key.
+known_key() {
+  local key=$1 k
+  for k in "${KNOWN_KEYS[@]}"; do
+    [[ $key == "$k" ]] && return 0
+  done
+  return 1
+}
+
+# Take a backup before replacing the config. shell.json.bak is the
+# immediately-previous state (kept for anything that already looks for it),
+# and a short rolling history sits beside it: one bad write is recoverable,
+# and so is a bad write *after* another one, which a single .bak could not
+# manage.
+BACKUP_KEEP=5
+
+backup_config() {
+  local stamp dest n old
+  # A second of resolution is not enough: the dock writes several times a
+  # second while a slider is being dragged, and every one of those states is
+  # worth being able to come back to. The counter only ever matters for
+  # writes inside the same second.
+  stamp=$(date +%Y%m%d-%H%M%S)
+  dest="$CFG.bak.$stamp"
+  n=1
+  while [[ -e $dest ]]; do
+    dest="$CFG.bak.$stamp-$n"
+    n=$((n + 1))
+  done
+
+  cp -p -- "$CFG" "$CFG.bak" 2>/dev/null || true
+  cp -p -- "$CFG" "$dest" 2>/dev/null || true
+  while read -r old; do
+    [[ -n $old ]] && rm -f -- "$old"
+  done < <(ls -1t -- "$CFG".bak.* 2>/dev/null | tail -n +$((BACKUP_KEEP + 1)))
 }
 
 # Serialize every read-modify-write of shell.json (and the taskbar patch that
@@ -56,25 +108,45 @@ lock_config() {
 # JSON that keeps the dock entry intact. A broken shell.json costs you the
 # whole bar, not just the dock. Extra arguments are passed to jq, for
 # callers that need --arg/--argjson bindings in the expression.
+#
+# The staged file inherits shell.json's own permissions: mktemp hands back a
+# 0600 tempfile, and moving that into place would quietly tighten the mode of
+# a file the rest of the shell (and anything else running as you) reads.
 apply() {
   local expr=$1 tmp
   shift
   tmp=$(mktemp "$CFG.XXXXXX") || return 1
+  chmod --reference="$CFG" -- "$tmp" 2>/dev/null || true
 
-  if ! jq "$@" "$DOCK |= ($expr)" "$CFG" >"$tmp" 2>/dev/null; then
+  if ! jq "$@" "$DOCK |= ($expr)" "$CFG" >"$tmp"; then
+    local err
+    err=$(jq "$@" "$DOCK |= ($expr)" "$CFG" 2>&1 >/dev/null)
     rm -f "$tmp"
     echo "error: update failed — nothing changed." >&2
+    [[ -n $err ]] && echo "  jq: $err" >&2
     return 1
   fi
 
   if ! jq -e "$DOCK | .id" "$tmp" >/dev/null 2>&1; then
     rm -f "$tmp"
-    echo "error: update would have dropped the dock entry — nothing changed." >&2
+    if dock_entry_exists; then
+      echo "error: update would have dropped the dock entry — nothing changed." >&2
+    else
+      echo "error: no animated.dock entry in $CFG — nothing changed." >&2
+      echo "  enable the plugin first: omarchy plugin add https://github.com/Davedes83/animated-dock --enable" >&2
+    fi
     return 1
   fi
 
-  cp "$CFG" "$CFG.bak"
+  backup_config
   mv "$tmp" "$CFG"
+}
+
+# Whether shell.json carries the plugin's entry at all. Distinguishes "you
+# tried to edit a dock that isn't there" from "your edit broke the entry",
+# which are very different problems with the same failed check.
+dock_entry_exists() {
+  jq -e 'any(.plugins[]?; .id == "animated.dock")' "$CFG" >/dev/null 2>&1
 }
 
 item_count() { jq -r "$DOCK | .items | length" "$CFG" 2>/dev/null; }
@@ -105,7 +177,10 @@ find_entry_for_appid() {
   local dirs=("$HOME/.local/share/applications" /usr/share/applications)
 
   for dir in "${dirs[@]}"; do
-    [[ -f "$dir/$appid.desktop" ]] && { echo "$appid"; return 0; }
+    [[ -f "$dir/$appid.desktop" ]] && {
+      echo "$appid"
+      return 0
+    }
   done
 
   local lc_appid=${appid,,} lc_tail=${tail,,}
@@ -116,7 +191,8 @@ find_entry_for_appid() {
       id=$(basename "$file" .desktop)
       local lc_id=${id,,}
       if [[ $lc_id == "$lc_appid" || $lc_id == "$lc_tail" || ${lc_id##*.} == "$lc_appid" ]]; then
-        echo "$id"; return 0
+        echo "$id"
+        return 0
       fi
     done
   done
@@ -124,7 +200,10 @@ find_entry_for_appid() {
   for dir in "${dirs[@]}"; do
     [[ -d $dir ]] || continue
     file=$(grep -ilE "^StartupWMClass=${appid}$" "$dir"/*.desktop 2>/dev/null | head -1)
-    [[ -n $file ]] && { basename "$file" .desktop; return 0; }
+    [[ -n $file ]] && {
+      basename "$file" .desktop
+      return 0
+    }
   done
 
   return 1
@@ -142,7 +221,7 @@ cmd_pin() {
   if jq -e --arg k "${appid,,}" "$DOCK | any(.items[]?;
         ([.appId // empty] | flatten | map(ascii_downcase) | index(\$k) != null)
         or ((.desktop // empty | ascii_downcase | sub(\"\\\\.desktop$\"; \"\")) == \$k))" \
-      "$CFG" >/dev/null 2>&1; then
+    "$CFG" >/dev/null 2>&1; then
     echo "already pinned: $appid"
     return 0
   fi
@@ -192,16 +271,16 @@ cmd_move() {
 cmd_set_item() {
   local idx=$1 json=$2
   valid_index "$idx" || die "usage: omarchy-dock-config set-item <index> <json> (0-based)"
-  echo "$json" | jq -e 'type == "object"' >/dev/null 2>&1 \
-    || die "set-item: not a JSON object: $json"
+  echo "$json" | jq -e 'type == "object"' >/dev/null 2>&1 ||
+    die "set-item: not a JSON object: $json"
   apply ".items[$idx] = \$item" --argjson item "$(echo "$json" | jq -c .)" || exit 1
   echo "set [$idx]: $(echo "$json" | jq -c .)"
 }
 
 cmd_add() {
   local json=$1 pos=${2:-}
-  echo "$json" | jq -e 'type == "object"' >/dev/null 2>&1 \
-    || die "add: not a JSON object: $json"
+  echo "$json" | jq -e 'type == "object"' >/dev/null 2>&1 ||
+    die "add: not a JSON object: $json"
   local item count
   item=$(echo "$json" | jq -c .)
   if [[ -n $pos ]]; then
@@ -228,7 +307,6 @@ cmd_add() {
 # deliberately unpinned everything) is never touched.
 
 resolve_file_manager() {
-  local apps="/usr/share/applications:$HOME/.local/share/applications"
   local cand
   for cand in org.gnome.Nautilus org.kde.dolphin thunar nemo caja pcmanfm; do
     if [[ -f /usr/share/applications/$cand.desktop || -f "$HOME/.local/share/applications/$cand.desktop" ]]; then
@@ -252,12 +330,25 @@ resolve_terminal() {
   # Omarchy's CLI reports a friendly label; map it back to a real desktop id.
   id=$(omarchy-default-terminal 2>/dev/null || true)
   case "$id" in
-    kitty) echo "kitty"; return ;;
-    foot) echo "foot"; return ;;
-    ghostty) echo "com.mitchellh.ghostty"; return ;;
+    kitty)
+      echo "kitty"
+      return
+      ;;
+    foot)
+      echo "foot"
+      return
+      ;;
+    ghostty)
+      echo "com.mitchellh.ghostty"
+      return
+      ;;
     alacritty)
-      [[ -f /usr/share/applications/org.alacritty.desktop ]] && { echo "org.alacritty"; return; }
-      echo "alacritty"; return
+      [[ -f /usr/share/applications/org.alacritty.desktop ]] && {
+        echo "org.alacritty"
+        return
+      }
+      echo "alacritty"
+      return
       ;;
   esac
   local cand
@@ -304,20 +395,47 @@ default_items() {
     ]'
 }
 
+# Print the starter items and touch nothing. install.sh seeds the same set
+# through this rather than carrying its own copy of the three resolvers, which
+# had drifted apart before.
+cmd_default_items() {
+  require jq
+  default_items
+}
+
 # Merge the shipped style defaults (config/shell.dock.json) with the per-user
-# starter items and swap the whole entry in, one atomic validated write.
+# starter items.
+#
+# Only the keys the repo defaults actually set are applied, and they are
+# applied *to the entry as it stands*: an entry that is missing `items` but
+# already carries the user's own `edge`, `iconSize` or `align` keeps them. The
+# first version of this replaced the whole entry with the repo defaults, which
+# silently reset every hand-tuned setting on a dock that had only just been
+# given its items.
+seeded_dock_entry() {
+  local items
+  items=$(default_items) || die "seed-defaults: could not resolve default apps"
+  jq -c --argjson items "$items" '.items = $items' "$DEFAULTS" ||
+    die "seed-defaults: could not build the default dock entry."
+}
+
 cmd_seed_defaults() {
-  local dock items tmp
   if jq -e "$DOCK | has(\"items\")" "$CFG" >/dev/null 2>&1; then
     echo "seed-defaults: entry already has items — nothing to do"
     return 0
   fi
   [[ -f $DEFAULTS ]] || die "seed-defaults: bundled defaults not found at $DEFAULTS"
-  items=$(default_items) || die "seed-defaults: could not resolve default apps"
-  dock=$(jq -c --argjson items "$items" '.items = $items' "$DEFAULTS") \
-    || die "seed-defaults: could not build the default dock entry."
-  apply '$dock' --argjson dock "$dock" || exit 1
-  echo "seeded the default dock items: $(echo "$items" | jq -c .)"
+
+  local defaults merged
+  defaults=$(seeded_dock_entry) || exit 1
+  # The repo's default keys are defaults: an existing entry is merged over by
+  # them, not the other way round.
+  merged=$(jq -c --argjson defaults "$defaults" \
+    '(.plugins[] | select(.id == "animated.dock")) as $e | $defaults * $e' "$CFG" 2>/dev/null) ||
+    die "seed-defaults: could not merge with the existing entry."
+
+  apply '$merged' --argjson merged "$merged" || exit 1
+  echo "seeded the default dock items: $(default_items | jq -c .)"
 }
 
 # Dock-level settings. Value is JSON, so numbers, bools and strings all
@@ -327,6 +445,11 @@ cmd_set() {
   local key=$1 value=$2
   [[ $key =~ ^[a-zA-Z][a-zA-Z0-9]*$ ]] || die "usage: omarchy-dock-config set <key> <json-value>"
   [[ $key == "id" || $key == "items" ]] && die "set: '$key' is not a settable key"
+  # shell.json is the dock's only settings surface, so an unrecognised key
+  # would sit there forever looking meaningful while the plugin ignores it.
+  known_key "$key" || die "set: unknown dock setting '$key'
+  known keys: ${KNOWN_KEYS[*]}
+  (omarchy-dock-config --help lists what each one does)"
   # Valid JSON only. jq -e: 0 truthy, 1 valid-but-falsey (false/null), and
   # >=2 means a parse/compile error. So rc that high = not JSON output.
   local rc
@@ -345,8 +468,8 @@ cmd_set() {
 cmd_state() {
   require jq
   [[ -f $CFG ]] || die "No shell.json at $CFG"
-  jq -r "$DOCK" "$CFG" 2>/dev/null \
-    || die "no entry for animated.dock in $CFG (the plugin is not enabled)"
+  jq -r "$DOCK" "$CFG" 2>/dev/null ||
+    die "no entry for animated.dock in $CFG (the plugin is not enabled)"
 }
 
 # Apply a full-document jq filter with the same atomic-write and validity
@@ -357,10 +480,14 @@ apply_bar() {
   local expr=$1 tmp
   shift
   tmp=$(mktemp "$CFG.XXXXXX") || return 1
+  chmod --reference="$CFG" -- "$tmp" 2>/dev/null || true
 
-  if ! jq "$@" "$expr" "$CFG" >"$tmp" 2>/dev/null; then
+  if ! jq "$@" "$expr" "$CFG" >"$tmp"; then
+    local err
+    err=$(jq "$@" "$expr" "$CFG" 2>&1 >/dev/null)
     rm -f "$tmp"
     echo "error: bar update failed — nothing changed." >&2
+    [[ -n $err ]] && echo "  jq: $err" >&2
     return 1
   fi
 
@@ -374,11 +501,16 @@ apply_bar() {
 
   if ! jq -e "$DOCK | .id" "$tmp" >/dev/null 2>&1; then
     rm -f "$tmp"
-    echo "error: update would have broken shell.json — nothing changed." >&2
+    if dock_entry_exists; then
+      echo "error: update would have broken shell.json — nothing changed." >&2
+    else
+      echo "error: no animated.dock entry in $CFG — nothing changed." >&2
+      echo "  enable the plugin first: omarchy plugin add https://github.com/Davedes83/animated-dock --enable" >&2
+    fi
     return 1
   fi
 
-  cp "$CFG" "$CFG.bak"
+  backup_config
   mv "$tmp" "$CFG"
 }
 
@@ -721,10 +853,10 @@ if src.count("{") != src.count("}"):
 shutil.copy2(p, p + ".bak")
 open(p, "w", encoding="utf-8").write(src)
 PY
-  grep -q 'function setBackgroundOpacity' "$qml" \
-    && grep -q 'function setBarCorners' "$qml" \
-    && grep -q 'function setBarGlow' "$qml" \
-    || die "could not patch $qml — the edits did not land"
+  grep -q 'function setBackgroundOpacity' "$qml" &&
+    grep -q 'function setBarCorners' "$qml" &&
+    grep -q 'function setBarGlow' "$qml" ||
+    die "could not patch $qml — the edits did not land"
 }
 
 ensure_bar_supported() {
@@ -738,12 +870,12 @@ ensure_bar_supported() {
     clone_id="${USER:-$(id -un)}.bar"
     if [[ -d $PLUGINS_DIR/$clone_id ]]; then
       require omarchy-shell
-      omarchy-shell shell enablePlugin "$clone_id" "" >/dev/null 2>&1 \
-        || die "could not activate the cloned taskbar '$clone_id'"
+      omarchy-shell shell enablePlugin "$clone_id" "" >/dev/null 2>&1 ||
+        die "could not activate the cloned taskbar '$clone_id'"
     else
       require "$OMARCHY_BIN"
-      "$OMARCHY_BIN" plugin clone omarchy.bar >/dev/null 2>&1 \
-        || die "could not clone the taskbar; run manually: omarchy plugin clone omarchy.bar"
+      "$OMARCHY_BIN" plugin clone omarchy.bar >/dev/null 2>&1 ||
+        die "could not clone the taskbar; run manually: omarchy plugin clone omarchy.bar"
     fi
     bar_id=$clone_id
     BAR_INSTALLED=1
@@ -752,9 +884,9 @@ ensure_bar_supported() {
   dir="$PLUGINS_DIR/$bar_id"
   [[ -f $dir/Bar.qml ]] || die "taskbar '$bar_id' has no Bar.qml at $dir"
 
-  grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" \
-    && grep -q 'function setBarCorners' "$dir/Bar.qml" \
-    && grep -q 'function setBarGlow' "$dir/Bar.qml" && return 0
+  grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" &&
+    grep -q 'function setBarCorners' "$dir/Bar.qml" &&
+    grep -q 'function setBarGlow' "$dir/Bar.qml" && return 0
   patch_bar "$dir/Bar.qml"
   BAR_INSTALLED=1
 }
@@ -773,8 +905,8 @@ restart_shell_after_install() {
 # shell.json); off -> the taskbar returns to its normal opaque background.
 cmd_matchbar_opacity() {
   local on=$1 current
-  [[ $on == "true" || $on == "false" ]] \
-    || die "usage: omarchy-dock-config matchbar-opacity <true|false>"
+  [[ $on == "true" || $on == "false" ]] ||
+    die "usage: omarchy-dock-config matchbar-opacity <true|false>"
 
   ensure_bar_supported
 
@@ -784,17 +916,17 @@ cmd_matchbar_opacity() {
   if [[ $on == "true" ]]; then
     apply_bar \
       '(.bar.backgroundOpacity = $o) | (.plugins[] | select(.id=="animated.dock")).matchBarOpacity = true' \
-      --argjson o "$current" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --argjson o "$current" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
     fi
     echo "matchbar-opacity: on (bar.backgroundOpacity = $current)"
   else
     apply_bar \
-      'del(.bar.backgroundOpacity) | del((.plugins[] | select(.id=="animated.dock")).matchBarOpacity)' \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      'del(.bar.backgroundOpacity) | del((.plugins[] | select(.id=="animated.dock")).matchBarOpacity)' ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
     fi
     echo "matchbar-opacity: off (taskbar returns to its normal opacity)"
@@ -806,12 +938,12 @@ cmd_matchbar_opacity() {
 # or a percentage (40); the bar turns percentages into fractions.
 cmd_bar_opacity() {
   local value=$1
-  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
-    || die "usage: omarchy-dock-config bar-opacity <fraction-or-percent>"
+  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
+    die "usage: omarchy-dock-config bar-opacity <fraction-or-percent>"
 
   ensure_bar_supported
   apply_bar '(.bar.backgroundOpacity = $o)' --argjson o "$value" || exit 1
-  if (( BAR_INSTALLED )); then
+  if ((BAR_INSTALLED)); then
     restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
   fi
   echo "bar-opacity: $value"
@@ -825,8 +957,8 @@ cmd_bar_opacity() {
 # one snapshot, one reload. Accepts a fraction (0.35) or a percentage (40).
 cmd_opacity() {
   local value=$1 sync
-  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
-    || die "usage: omarchy-dock-config opacity <fraction-or-percent>"
+  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
+    die "usage: omarchy-dock-config opacity <fraction-or-percent>"
 
   sync=$(jq -r "$DOCK.matchBarOpacity // false" "$CFG" 2>/dev/null)
   [[ $sync == "true" ]] && ensure_bar_supported
@@ -834,9 +966,9 @@ cmd_opacity() {
   if [[ $sync == "true" ]]; then
     apply_bar \
       '(.plugins[] | select(.id=="animated.dock")).backgroundOpacity = $o | .bar.backgroundOpacity = $o' \
-      --argjson o "$value" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --argjson o "$value" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar opacity support installed — restarting to apply it." "Sync taskbar opacity"
     fi
     echo "opacity: $value (taskbar mirrored)"
@@ -852,15 +984,15 @@ cmd_opacity() {
 # off -> the taskbar returns to its plain rectangular background.
 cmd_matchbar_corners() {
   local on=$1
-  [[ $on == "true" || $on == "false" ]] \
-    || die "usage: omarchy-dock-config matchbar-corners <true|false>"
+  [[ $on == "true" || $on == "false" ]] ||
+    die "usage: omarchy-dock-config matchbar-corners <true|false>"
 
   ensure_bar_supported
 
   if [[ $on == "true" ]]; then
     local shape radius radius_js
     shape=$(jq -r "$DOCK.cornerShape // \"rounded\"" "$CFG" 2>/dev/null)
-    case "$shape" in square|pill|rounded) ;; *) shape="rounded" ;; esac
+    case "$shape" in square | pill | rounded) ;; *) shape="rounded" ;; esac
     radius=$(jq -r "$DOCK.cornerRadius // null" "$CFG" 2>/dev/null)
     if [[ $shape == "rounded" && $radius =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
       radius_js=$radius
@@ -869,9 +1001,9 @@ cmd_matchbar_corners() {
     fi
     apply_bar \
       '(.bar.cornerShape = $shape) | if ($radius != null) then (.bar.cornerRadius = $radius) else del(.bar.cornerRadius) end | (.plugins[] | select(.id=="animated.dock")).matchBarCorners = true' \
-      --arg shape "$shape" --argjson radius "$radius_js" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --arg shape "$shape" --argjson radius "$radius_js" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
     fi
     if [[ $radius_js == "null" ]]; then
@@ -881,9 +1013,9 @@ cmd_matchbar_corners() {
     fi
   else
     apply_bar \
-      'del(.bar.cornerShape) | del(.bar.cornerRadius) | del((.plugins[] | select(.id=="animated.dock")).matchBarCorners)' \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      'del(.bar.cornerShape) | del(.bar.cornerRadius) | del((.plugins[] | select(.id=="animated.dock")).matchBarCorners)' ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
     fi
     echo "matchbar-corners: off (taskbar returns to its rectangular background)"
@@ -897,7 +1029,7 @@ cmd_bar_corner() {
   ensure_bar_supported
   local shape radius radius_js
   shape=$(jq -r "$DOCK.cornerShape // \"rounded\"" "$CFG" 2>/dev/null)
-  case "$shape" in square|pill|rounded) ;; *) shape="rounded" ;; esac
+  case "$shape" in square | pill | rounded) ;; *) shape="rounded" ;; esac
   radius=$(jq -r "$DOCK.cornerRadius // null" "$CFG" 2>/dev/null)
   if [[ $shape == "rounded" && $radius =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
     radius_js=$radius
@@ -906,9 +1038,9 @@ cmd_bar_corner() {
   fi
   apply_bar \
     '(.bar.cornerShape = $shape) | if ($radius != null) then (.bar.cornerRadius = $radius) else del(.bar.cornerRadius) end' \
-    --arg shape "$shape" --argjson radius "$radius_js" \
-    || exit 1
-  if (( BAR_INSTALLED )); then
+    --arg shape "$shape" --argjson radius "$radius_js" ||
+    exit 1
+  if ((BAR_INSTALLED)); then
     restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
   fi
   if [[ $radius_js == "null" ]]; then
@@ -927,7 +1059,7 @@ cmd_bar_corner() {
 cmd_corner_shape() {
   local shape=$1 sync radius radius_js
   case "$shape" in
-    square|pill|rounded) ;;
+    square | pill | rounded) ;;
     *) die "usage: omarchy-dock-config corner-shape <square|pill|rounded>" ;;
   esac
 
@@ -943,9 +1075,9 @@ cmd_corner_shape() {
     fi
     apply_bar \
       '(.plugins[] | select(.id=="animated.dock")).cornerShape = $shape | .bar.cornerShape = $shape | if ($radius != null) then .bar.cornerRadius = $radius else del(.bar.cornerRadius) end' \
-      --arg shape "$shape" --argjson radius "$radius_js" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --arg shape "$shape" --argjson radius "$radius_js" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar corner support installed — restarting to apply it." "Sync taskbar corners"
     fi
     if [[ $radius_js == "null" ]]; then
@@ -965,8 +1097,8 @@ cmd_corner_shape() {
 # plain border.
 cmd_matchbar_glow() {
   local on=$1
-  [[ $on == "true" || $on == "false" ]] \
-    || die "usage: omarchy-dock-config matchbar-glow <true|false>"
+  [[ $on == "true" || $on == "false" ]] ||
+    die "usage: omarchy-dock-config matchbar-glow <true|false>"
 
   ensure_bar_supported
 
@@ -977,20 +1109,20 @@ cmd_matchbar_glow() {
     amt=$(jq -r "$DOCK.glowAmount // 0.5" "$CFG" 2>/dev/null)
     [[ $amt =~ ^[0-9]+(\.[0-9]+)?$ ]] || amt=0.5
     focus=$(jq -r "$DOCK.glowFocus // \"full\"" "$CFG" 2>/dev/null)
-    case "$focus" in top|bottom) ;; *) focus="full" ;; esac
+    case "$focus" in top | bottom) ;; *) focus="full" ;; esac
     apply_bar \
       '(.bar.glow = $g) | (.bar.glowAmount = $a) | (.bar.glowFocus = $f) | (.plugins[] | select(.id=="animated.dock")).matchBarGlow = true' \
-      --argjson g "$glow" --argjson a "$amt" --arg f "$focus" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --argjson g "$glow" --argjson a "$amt" --arg f "$focus" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
     fi
     echo "matchbar-glow: on (bar.glow = $glow, bar.glowAmount = $amt, bar.glowFocus = $focus)"
   else
     apply_bar \
-      'del(.bar.glow) | del(.bar.glowAmount) | del(.bar.glowFocus) | del((.plugins[] | select(.id=="animated.dock")).matchBarGlow)' \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      'del(.bar.glow) | del(.bar.glowAmount) | del(.bar.glowFocus) | del((.plugins[] | select(.id=="animated.dock")).matchBarGlow)' ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
     fi
     echo "matchbar-glow: off (taskbar returns to its plain border)"
@@ -1002,8 +1134,8 @@ cmd_matchbar_glow() {
 # settings popup's Border glow toggle.
 cmd_glow() {
   local on=$1 sync
-  [[ $on == "true" || $on == "false" ]] \
-    || die "usage: omarchy-dock-config glow <true|false>"
+  [[ $on == "true" || $on == "false" ]] ||
+    die "usage: omarchy-dock-config glow <true|false>"
 
   sync=$(jq -r "$DOCK.matchBarGlow // false" "$CFG" 2>/dev/null)
   [[ $sync == "true" ]] && ensure_bar_supported
@@ -1011,9 +1143,9 @@ cmd_glow() {
   if [[ $sync == "true" ]]; then
     apply_bar \
       '(.plugins[] | select(.id=="animated.dock")).glow = $g | .bar.glow = $g' \
-      --argjson g "$on" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --argjson g "$on" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
     fi
     echo "glow: $on (taskbar mirrored)"
@@ -1029,8 +1161,8 @@ cmd_glow() {
 # (60); the bar's setBarGlow() turns percentages into fractions.
 cmd_glow_amount() {
   local value=$1 sync
-  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] \
-    || die "usage: omarchy-dock-config glow-amount <fraction-or-percent>"
+  [[ $value =~ ^[0-9]+(\.[0-9]+)?$ ]] ||
+    die "usage: omarchy-dock-config glow-amount <fraction-or-percent>"
 
   sync=$(jq -r "$DOCK.matchBarGlow // false" "$CFG" 2>/dev/null)
   [[ $sync == "true" ]] && ensure_bar_supported
@@ -1038,9 +1170,9 @@ cmd_glow_amount() {
   if [[ $sync == "true" ]]; then
     apply_bar \
       '(.plugins[] | select(.id=="animated.dock")).glowAmount = $a | .bar.glowAmount = $a' \
-      --argjson a "$value" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --argjson a "$value" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
     fi
     echo "glow-amount: $value (taskbar mirrored)"
@@ -1056,7 +1188,7 @@ cmd_glow_amount() {
 cmd_glow_focus() {
   local focus=$1 sync
   case "$focus" in
-    full|top|bottom) ;;
+    full | top | bottom) ;;
     *) die "usage: omarchy-dock-config glow-focus <full|top|bottom>" ;;
   esac
 
@@ -1066,9 +1198,9 @@ cmd_glow_focus() {
   if [[ $sync == "true" ]]; then
     apply_bar \
       '(.plugins[] | select(.id=="animated.dock")).glowFocus = $f | .bar.glowFocus = $f' \
-      --arg f "$focus" \
-      || exit 1
-    if (( BAR_INSTALLED )); then
+      --arg f "$focus" ||
+      exit 1
+    if ((BAR_INSTALLED)); then
       restart_shell_after_install "Taskbar glow support installed — restarting to apply it." "Sync taskbar glow"
     fi
     echo "glow-focus: $focus (taskbar mirrored)"
@@ -1084,7 +1216,7 @@ cmd_ensure_bar() {
   ensure_bar_supported
   local bar_id
   bar_id=$(jq -r '.bar.id // "omarchy.bar"' "$CFG")
-  if (( BAR_INSTALLED )); then
+  if ((BAR_INSTALLED)); then
     restart_shell_after_install "Taskbar sync support was just installed for '$bar_id'."
   else
     echo "ensure-bar: taskbar '$bar_id' already supports backgroundOpacity, corners and glow — nothing to do."
@@ -1094,36 +1226,126 @@ cmd_ensure_bar() {
 if [[ $# -gt 0 ]]; then
   # Read-only subcommands skip the write lock; everything else is serialized.
   case $1 in
-    -h | --help | help | state) ;;
+    -h | --help | help | state | default-items) ;;
     *) lock_config ;;
   esac
   case $1 in
-    pin)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_pin "${1:-}" "${2:-}" ;;
-    unpin)    require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_unpin "${1:-}" ;;
-    move)     require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_move "${1:-}" "${2:-}" ;;
-    set-item) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set_item "${1:-}" "${2:-}" ;;
-    add)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_add "${1:-}" "${2:-}" ;;
-    set)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_set "${1:-}" "${2:-}" ;;
-    bar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_opacity "${1:-}" ;;
-    opacity)     require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_opacity "${1:-}" ;;
-    matchbar-opacity) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_opacity "${1:-}" ;;
-    bar-corner) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_bar_corner ;;
-    corner-shape) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_corner_shape "${1:-}" ;;
-    matchbar-corners) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_corners "${1:-}" ;;
-    glow)      require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow "${1:-}" ;;
-    glow-amount) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow_amount "${1:-}" ;;
-    glow-focus) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_glow_focus "${1:-}" ;;
-    matchbar-glow) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; shift; cmd_matchbar_glow "${1:-}" ;;
-    ensure-bar) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_ensure_bar ;;
-    seed-defaults) require jq; [[ -f $CFG ]] || die "No shell.json at $CFG"; cmd_seed_defaults ;;
-    state)    cmd_state ;;
+    pin)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_pin "${1:-}" "${2:-}"
+      ;;
+    unpin)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_unpin "${1:-}"
+      ;;
+    move)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_move "${1:-}" "${2:-}"
+      ;;
+    set-item)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_set_item "${1:-}" "${2:-}"
+      ;;
+    add)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_add "${1:-}" "${2:-}"
+      ;;
+    set)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_set "${1:-}" "${2:-}"
+      ;;
+    bar-opacity)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_bar_opacity "${1:-}"
+      ;;
+    opacity)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_opacity "${1:-}"
+      ;;
+    matchbar-opacity)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_matchbar_opacity "${1:-}"
+      ;;
+    bar-corner)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_bar_corner
+      ;;
+    corner-shape)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_corner_shape "${1:-}"
+      ;;
+    matchbar-corners)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_matchbar_corners "${1:-}"
+      ;;
+    glow)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_glow "${1:-}"
+      ;;
+    glow-amount)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_glow_amount "${1:-}"
+      ;;
+    glow-focus)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_glow_focus "${1:-}"
+      ;;
+    matchbar-glow)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      shift
+      cmd_matchbar_glow "${1:-}"
+      ;;
+    ensure-bar)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      cmd_ensure_bar
+      ;;
+    seed-defaults)
+      require jq
+      [[ -f $CFG ]] || die "No shell.json at $CFG"
+      cmd_seed_defaults
+      ;;
+    default-items) cmd_default_items ;;
+    state) cmd_state ;;
     -h | --help | help)
       cat <<'EOF'
 animated.dock configurator
 
 The plugin's own entry in ~/.config/omarchy/shell.json is the only config
-surface. These subcommands edit it atomically (backup at shell.json.bak),
-and the shell hot-reloads the change on save.
+surface. These subcommands edit it atomically — the previous state is kept at
+shell.json.bak, with a short rolling history beside it (shell.json.bak.<stamp>,
+newest five) — and the shell hot-reloads the change on save.
 
   pin <appId> [index]    pin a running app's id (0-based items[] order)
   unpin <index>          remove a pinned item
@@ -1149,6 +1371,7 @@ and the shell hot-reloads the change on save.
   ensure-bar                 install taskbar sync support (idempotent)
   seed-defaults              seed the starter item set (Menu, files, default
                        terminal and browser); no-op once items exist
+  default-items          print the starter items as JSON and change nothing
   state                  print the plugin's entry
 
 The first time any sync setting runs, ensure-bar installs the small taskbar
@@ -1158,15 +1381,14 @@ Bar.qml is only touched when it is an unsupported user-owned copy (stock
 omarchy.bar is first cloned into your plugins, exactly like `omarchy plugin
 clone`).
 
-Keys the dock reads from its entry: edge, align, iconSize, zoom, zoomRaise,
-magnify, gaussianZoom, animation, spacing, padding, backgroundOpacity,
-glyphScale,
-tiles, tileRadius, tileInset, tileOpacity, border, borderOpacity, cornerRadius,
-cornerShape, glow, glowAmount, glowFocus, autohide, dodge, pressure,
-revealDelay, hideDelay, showWhenEmpty, hotspotHeight,
-hotspotFullWidth, runningIndicator, labels, showRunning, tintIcons,
-tintRunning, monochrome, glyphColor, matchBarOpacity, matchBarCorners,
-matchBarGlow, fullWidth, edgeGap, items.
+Settable keys (printed from the same list `set` validates against, so the
+two cannot drift). "null" removes one, and the plugin's built-in default
+applies again:
+EOF
+      printf '  %s\n' "${KNOWN_KEYS[@]}"
+      cat <<'EOF'
+
+Items are edited with add / set-item / pin / unpin / move, not `set`.
 
 Item forms in items[]:
   { "desktop": "kitty" }                  launch a desktop entry

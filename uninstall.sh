@@ -15,10 +15,9 @@ CFG="$HOME/.config/omarchy/shell.json"
 HYPRLAND_LUA="$HOME/.config/hypr/hyprland.lua"
 STAMP="$(date +%s)"
 
-# The exact lines install.sh writes, plus the legacy forms older installs left
-# behind. Removal is anchored so only our own lines are ever touched.
-MINE_COMMENT='-- Blur and layer rules for the dock (see the AnimatedDock repo).'
-REQUIRE_LINE='pcall(require, "hypr.dock") -- AnimatedDock'
+# The lines install.sh writes, plus the legacy forms older installs left
+# behind. Removal is anchored so only our own lines are ever touched — matched
+# by pattern here, and deleted by exact line below.
 REQUIRE_DETECT='^[[:space:]]*(pcall\(require, "hypr\.dock"\)( -- AnimatedDock)?|require\("hypr\.dock"\))([[:space:]]|$)'
 
 PURGE_CONFIG=false
@@ -51,7 +50,7 @@ unlink_ours() {
   # boundary-aware so a sibling like "$REPO-old" is never matched. The bin
   # and hypr links resolve to files inside the repo, hence the "$base/"*
   # arm; a plain exact compare against $base would miss those.
-  if [[ -L $dest && -n $target && ( $target == "$base" || $target == "$base"/* ) ]]; then
+  if [[ -L $dest && -n $target && ($target == "$base" || $target == "$base"/*) ]]; then
     rm -f "$dest"
     ok "removed ${dest/#$HOME/\~}"
   elif [[ -e $dest ]]; then
@@ -76,9 +75,12 @@ fi
 
 if $PURGE_CONFIG && [[ -f $CFG ]]; then
   tmp=$(mktemp "$CFG.XXXXXX")
+  # Keep shell.json's own permissions across the swap — mktemp's 0600 would
+  # otherwise become the file's mode.
+  chmod --reference="$CFG" -- "$tmp" 2>/dev/null || true
   if jq '.plugins = ((.plugins // []) | map(select(.id != "animated.dock")))' "$CFG" >"$tmp" 2>/dev/null &&
     jq -e . "$tmp" >/dev/null 2>&1; then
-    cp "$CFG" "$CFG.bak.$STAMP"
+    cp -p -- "$CFG" "$CFG.bak.$STAMP"
     mv "$tmp" "$CFG"
     ok "removed the dock entry from shell.json (backup: shell.json.bak.$STAMP)"
   else

@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [master, Dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shell:
+    name: Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck --version
+          shellcheck -S warning install.sh uninstall.sh bin/omarchy-dock-config tests/config-test.sh
+
+      - name: Bash syntax
+        run: |
+          for f in install.sh uninstall.sh bin/omarchy-dock-config tests/config-test.sh; do
+            bash -n "$f" && echo "ok  $f"
+          done
+
+      - name: Formatter check (shfmt)
+        run: |
+          sudo apt-get install -y -qq shfmt
+          shfmt -d -i 2 -ci install.sh uninstall.sh bin/omarchy-dock-config tests/config-test.sh
+
+      - name: Configurator tests
+        run: |
+          sudo apt-get install -y -qq jq
+          ./tests/config-test.sh
+
+  config:
+    name: JSON and manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JSON parses and keeps its shape
+        run: |
+          sudo apt-get install -y -qq jq
+          for f in manifest.json config/shell.dock.json; do
+            jq -e . "$f" >/dev/null && echo "ok  $f"
+          done
+
+      - name: The manifest points at files that exist
+        run: |
+          entry=$(jq -r '.entryPoints | to_entries[].value' manifest.json)
+          id=$(jq -r '.id' manifest.json)
+          schema=$(jq -r '.schemaVersion' manifest.json)
+          kinds=$(jq -r '.kinds | join(",")' manifest.json)
+          [[ -f $entry ]] || { echo "$entry is missing"; exit 1; }
+          [[ $id == "animated.dock" ]] || { echo "id is $id"; exit 1; }
+          [[ $kinds == "panel" ]] || { echo "kinds is $kinds"; exit 1; }
+          [[ $schema == "1" ]] || { echo "schemaVersion is $schema"; exit 1; }
+          echo "ok  $id -> $entry"
+
+      - name: Every key the configurator accepts is one the dock reads
+        run: |
+          # A key that only one side knows about is a setting that silently
+          # does nothing, or a documented option the writer refuses.
+          keys=$(sed -n '/^KNOWN_KEYS=(/,/^)/p' bin/omarchy-dock-config \
+            | tr -d '\n' | sed 's/.*(\(.*\))/\1/')
+          missing=""
+          for k in $keys; do
+            grep -qE "(num0?|fraction|flag)\(\"$k\"|config\.$k\b" *.qml || missing="$missing $k"
+          done
+          if [[ -n $missing ]]; then
+            echo "configurator accepts keys the dock never reads:$missing"
+            exit 1
+          fi
+          echo "ok  all keys are read by the dock"
