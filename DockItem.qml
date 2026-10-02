@@ -75,6 +75,9 @@ Item {
   // Glyph ink is measurable, unlike an icon's alpha, so glyphs normalise
   // themselves: measure the tight bounding box at a reference size, then
   // pick the size that lands the ink at the target fraction of the slot.
+  // (TextMetrics is a QObject, not an Item, so it cannot be switched off per
+  // cell — but an icon cell's text binding never changes, so its measurement
+  // runs once and then never again.)
   TextMetrics {
     id: glyphMetrics
     font.family: Style.font.resolvedFamily
@@ -237,9 +240,19 @@ Item {
     xAxis.enabled: !(cell.holdMenu && cell.dock.vertical)
     yAxis.enabled: !(cell.holdMenu && !cell.dock.vertical)
 
+    // `active` going false is not always "the user let go": this press can be
+    // taken over by the menu (holdMenu flips the axes, sweeping disables the
+    // handler outright), which ends the gesture mid-press. Committing on those
+    // would write a reorder nobody asked for, so a press that became a menu
+    // gesture is dropped and only a plain release commits.
     onActiveChanged: {
-      if (active) cell.dock.beginDrag(cell, centroid.scenePosition.x, centroid.scenePosition.y)
-      else cell.dock.endDrag()
+      if (active) {
+        cell.dock.beginDrag(cell, centroid.scenePosition.x, centroid.scenePosition.y)
+      } else if (cell.holdMenu || cell.sweeping) {
+        cell.dock.cancelDrag()
+      } else {
+        cell.dock.endDrag()
+      }
     }
 
     onCentroidChanged: if (active) cell.dock.updateDrag(cell, centroid.scenePosition.x, centroid.scenePosition.y)
@@ -258,12 +271,10 @@ Item {
       if (cell.dock.dragging) return
       if (hovered) {
         cell.dock.hoveredLabel = cell.label
-        cell.dock.hoveredIndex = cell.index
         var c = cell.mapToItem(null, cell.width / 2, cell.height / 2)
         cell.dock.hoveredCenter = cell.dock.vertical ? c.y : c.x
       } else {
         if (cell.dock.hoveredLabel === cell.label) cell.dock.hoveredLabel = ""
-        if (cell.dock.hoveredIndex === cell.index) cell.dock.hoveredIndex = -1
       }
     }
 

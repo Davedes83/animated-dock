@@ -1,4 +1,3 @@
-
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
@@ -41,10 +40,11 @@ PopupWindow {
     wins = next.slice()
   }
 
-  // Launchable = the click-when-not-running path exists. Synthesized
-  // running items without a desktop entry have windows but no way to open
-  // another; they get no New Window row.
-  readonly property bool launchable: Util.isPlainObject(item)
+  // Launchable = the click-when-not-running path exists, i.e. there is
+  // something for "New Window" to open. A synthesized running item without a
+  // desktop entry has windows but no way to open another; it gets no
+  // New Window row.
+  readonly property bool canLaunch: Util.isPlainObject(item)
     && (item.exec !== undefined || item.desktop !== undefined || entry !== null)
   // Static slots are pinned items with no launch command; they can be
   // unpinned but can't open "New Window". Any config item counts — an
@@ -52,8 +52,6 @@ PopupWindow {
   // config membership it would look locked in with no way out.
   readonly property bool isStatic: Util.isPlainObject(item)
     && (item.showApps === true || item.trash === true || dock.items.indexOf(item) >= 0)
-  readonly property bool canLaunch: Util.isPlainObject(item)
-    && (item.exec !== undefined || item.desktop !== undefined || entry !== null)
 
   readonly property bool isApps: Util.isPlainObject(item) && item.showApps === true
   readonly property bool isRunningItem: Util.isPlainObject(item) && item.__running === true
@@ -106,7 +104,7 @@ PopupWindow {
       out.push({ kind: "action", glyph: "󰐃", label: "Pin to Dock", act: "pin" })
     else if (isApps)
       out.push({ kind: "action", glyph: "󰒓", label: "Settings", act: "settings" })
-    else if (launchable || isStatic)
+    else if (isStatic)
       out.push({ kind: "action", glyph: "󰐃", label: "Unpin", act: "unpin" })
     if (wins.length > 1) {
       out.push({ kind: "sep" })

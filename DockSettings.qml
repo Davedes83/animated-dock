@@ -286,15 +286,14 @@ PopupWindow {
         }
       }
 
-      Toggle {
-        id: gaussianToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Gaussian zoom"
         description: "Bell-curve falloff instead of the quadratic fishbowl."
-        checked: settings.dock.flag("gaussianZoom", true)
+        stored: settings.dock.flag("gaussianZoom", true)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("gaussianZoom", String(!settings.dock.flag("gaussianZoom", true)))
+        onRequestWrite: function(v) { settings.dock.applySetting("gaussianZoom", String(v)) }
       }
 
       Column {
@@ -395,26 +394,24 @@ PopupWindow {
         }
       }
 
-      Toggle {
-        id: fullWidthToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Full length"
         description: "Span the whole edge of the screen."
-        checked: settings.dock.flag("fullWidth", false)
+        stored: settings.dock.flag("fullWidth", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("fullWidth", String(!settings.dock.flag("fullWidth", false)))
+        onRequestWrite: function(v) { settings.dock.applySetting("fullWidth", String(v)) }
       }
 
-      Toggle {
-        id: borderToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Border"
         description: "Outline around the dock card."
-        checked: settings.dock.flag("border", true)
+        stored: settings.dock.flag("border", true)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("border", String(!settings.dock.flag("border", true)))
+        onRequestWrite: function(v) { settings.dock.applySetting("border", String(v)) }
       }
 
       Column {
@@ -470,18 +467,15 @@ PopupWindow {
         fontSize: Style.font.body
       }
 
-      Toggle {
-        id: glowToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Border glow"
         description: "Soft halo blooming out from the dock's border."
-        checked: settings.dock.flag("glow", false)
+        stored: settings.dock.flag("glow", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("glow", false)
-          Util.execDetached(settings.dock.configCmd
-            + " glow " + (next ? "true" : "false"))
+        onRequestWrite: function(v) {
+          Util.execDetached(settings.dock.configCmd + " glow " + (v ? "true" : "false"))
         }
       }
 
@@ -575,26 +569,24 @@ PopupWindow {
         fontSize: Style.font.body
       }
 
-      Toggle {
-        id: autohideToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Auto-hide"
         description: "Slide the dock off-screen until the edge is brushed."
-        checked: settings.dock.flag("autohide", true)
+        stored: settings.dock.flag("autohide", true)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("autohide", String(!settings.dock.flag("autohide", true)))
+        onRequestWrite: function(v) { settings.dock.applySetting("autohide", String(v)) }
       }
 
-      Toggle {
-        id: tooltipsToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Show icon name on hover"
         description: "Show the icon's name when hovering over it."
-        checked: settings.dock.flag("tooltips", true)
+        stored: settings.dock.flag("tooltips", true)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: settings.dock.applySetting("tooltips", String(!settings.dock.flag("tooltips", true)))
+        onRequestWrite: function(v) { settings.dock.applySetting("tooltips", String(v)) }
       }
 
       PanelSeparator {
@@ -609,48 +601,39 @@ PopupWindow {
         fontSize: Style.font.body
       }
 
-      Toggle {
-        id: matchBarOpacityToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Sync taskbar opacity"
         description: "Make the taskbar's background as opaque as the dock's."
-        checked: settings.dock.flag("matchBarOpacity", false)
+        stored: settings.dock.flag("matchBarOpacity", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("matchBarOpacity", false)
-          Util.execDetached(settings.dock.configCmd
-            + " matchbar-opacity " + (next ? "true" : "false"))
+        onRequestWrite: function(v) {
+          Util.execDetached(settings.dock.configCmd + " matchbar-opacity " + (v ? "true" : "false"))
         }
       }
 
-      Toggle {
-        id: matchBarCornersToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Sync taskbar corners"
         description: "Give the taskbar the dock's corner shape (rounded, square or pill)."
-        checked: settings.dock.flag("matchBarCorners", false)
+        stored: settings.dock.flag("matchBarCorners", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("matchBarCorners", false)
-          Util.execDetached(settings.dock.configCmd
-            + " matchbar-corners " + (next ? "true" : "false"))
+        onRequestWrite: function(v) {
+          Util.execDetached(settings.dock.configCmd + " matchbar-corners " + (v ? "true" : "false"))
         }
       }
 
-      Toggle {
-        id: matchBarGlowToggle
+      DockToggle {
         width: settings.contentWidth
         label: "Sync taskbar glow"
         description: "Give the taskbar the dock's border glow."
-        checked: settings.dock.flag("matchBarGlow", false)
+        stored: settings.dock.flag("matchBarGlow", false)
         foreground: Color.popups.text
         accent: Color.accent
-        onClicked: {
-          var next = !settings.dock.flag("matchBarGlow", false)
-          Util.execDetached(settings.dock.configCmd
-            + " matchbar-glow " + (next ? "true" : "false"))
+        onRequestWrite: function(v) {
+          Util.execDetached(settings.dock.configCmd + " matchbar-glow " + (v ? "true" : "false"))
         }
       }
 

@@ -169,6 +169,13 @@ Item {
   // Running-but-not-pinned, as synthesized dock items. An app with no
   // desktop entry still shows — generic glyph, appId for a label — since
   // "it is running" is the whole point of the section.
+  //
+  // Order is the toplevel list's own — window-creation order, which is what
+  // every dock worth copying does (dash2dock, the Ubuntu dash, macOS): an
+  // existing icon keeps its slot as windows come and go. Sorting this by
+  // focus instead would be MRU, but focus changes constantly, so the section
+  // would reshuffle under the pointer every time the user alt-tabbed. MRU
+  // still decides the order *within* an app, in windowsFor() below.
   readonly property var extras: {
     var claimedKeys = []
     var list = Array.isArray(pinnedItems) ? pinnedItems : []

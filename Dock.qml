@@ -651,12 +651,11 @@ Item {
   readonly property bool fisheyeActive: magnify && pointerInside && !dragging && revealed
 
   // The lens never applies its targets directly. Every cell holds a current
-  // scale and position that a 16 ms loop eases toward the computed targets,
-  // and the peak anchor only hands off to a neighbour once the pointer has
-  // cleared the boundary by a margin. This kills the two classic dock
-  // jitters: the whole-row anchor jump when the most magnified cell hands
-  // off, and the sawtooth re-easing of a Behaviour restarting on every
-  // pointer move.
+  // scale and position that a 16 ms loop eases toward the computed targets.
+  // This kills the sawtooth re-easing of a Behaviour restarting on every
+  // pointer move. The loop is demand-driven: it runs while something is
+  // actually moving (wakeFish) and parks itself again the moment the cells
+  // reach their targets, so a pointer resting on the dock costs nothing.
 
   property bool fishSmoothing: false   // the frame loop is winding down or up
 
@@ -706,6 +705,11 @@ Item {
   // neighbours — the classic fishbowl — while cells further out sit at
   // exact scale 1 and their base position.
   //
+  // With `magnify` off the lens is not merely inactive, it is *absent*: the
+  // boost is 0, so every target is scale 1. (Gating only `fisheyeActive`
+  // used to leave the easing loop chasing a real zoom with nothing to show
+  // it, which popped the icons on every hover.)
+  //
   // The border stays where it is for the whole hover: the row's resting
   // length is a dartboard already, and the lens reserves the card's pad
   // and the 240 px of label slack instead of asking the window to grow.
@@ -723,7 +727,7 @@ Item {
     // cell's centre sits on the quadratic's cut-off distance, so the bell
     // curve's asymptotic tail wears out inside the same reach.
     var sigma = T / 3
-    var boost = zoom
+    var boost = magnify ? zoom : 0
     var scales = new Array(n)
     var i
     for (i = 0; i < n; i++) {
@@ -765,8 +769,10 @@ Item {
   }
 
   // One easing frame toward the computed targets — dash2dock's continuous
-  // zoom damping. Once the pointer is gone and nothing moves, snap cleanly
-  // onto the base layout and stop the loop.
+  // zoom damping. When the pointer leaves and nothing moves, snap cleanly onto
+  // the base layout and stop; while the pointer is still inside, simply stop
+  // once the cells have reached their targets (the lens keeps holding them
+  // there, and the next pointer move wakes the loop again).
   function fishStep() {
     var n = displayItems.length
     if (n === 0) { fishSmoothing = false; return }
@@ -801,10 +807,20 @@ Item {
     // The card's own `Behavior on width` glides the border when the item
     // set actually settles (a pin, an unpin, a running window closing).
 
-    if (maxScaleDelta < 0.012 && !fisheyeActive) {
-      for (var j = 0; j < n; j++) { s[j] = 1; p[j] = cellPos[j] || 0 }
-      fishScaleCur = s
-      fishPosCur = p
+    // Idle thresholds. With the lens live the cells must be visually still
+    // (sub-pixel) before the loop parks, or the dock would keep re-rendering
+    // at 60 Hz under a motionless pointer. With the lens off, scale is only
+    // "close enough"; the cells' own Behaviors finish the last of the
+    // travel once the loop releases them.
+    var scaleEps = fisheyeActive ? 0.001 : 0.012
+    var moveEps = fisheyeActive ? 0.001 : 0.5
+    if (maxScaleDelta < scaleEps && maxMove < moveEps) {
+      if (!fisheyeActive) {
+        // Settled on the base layout: snap exactly onto it and stop.
+        for (var j = 0; j < n; j++) { s[j] = 1; p[j] = cellPos[j] || 0 }
+        fishScaleCur = s
+        fishPosCur = p
+      }
       fishSmoothing = false
     }
   }
@@ -823,8 +839,11 @@ Item {
     fishPosCur = p
   }
 
-  // Start chasing; called whenever the lens might need to move.
+  // Start chasing; called whenever the lens might need to move. With the
+  // lens off (`magnify: false`) there is nothing to chase: every target is
+  // scale 1, so the loop would only burn frames rewriting the same numbers.
   function wakeFish() {
+    if (!magnify) return
     if (!fishSmoothing) { ensureFishState(); fishSmoothing = true }
   }
 
@@ -836,8 +855,13 @@ Item {
     onTriggered: root.fishStep()
   }
 
+  // Every source that can change a lens target restarts the loop. The
+  // pointer move is the important one: the loop parks itself once the cells
+  // reach their targets, so without this a settled dock would never notice
+  // the next move.
   onPointerInsideChanged: if (root.pointerInside) root.wakeFish()
   onFisheyeActiveChanged: if (root.fisheyeActive) root.wakeFish()
+  onPointerMainChanged: if (root.fisheyeActive) root.wakeFish()
   onDisplayItemsChanged: root.wakeFish()
 
   // Resting content length (scale 1 everywhere).
@@ -905,8 +929,18 @@ Item {
   }
 
   readonly property bool fullWidth: flag("fullWidth", false)
+  // The lens grows every cell in place about its own base centre, so the
+  // first and last cells can reach half their growth past the row's ends —
+  // straight through the card's padding and over its border. `pad` absorbs
+  // that; this is the part it doesn't, reserved on both main flanks. It is
+  // derived from the config alone (slot, zoom, pad), never from the pointer,
+  // so the card still doesn't move while the lens runs. At low zoom it is 0
+  // and the resting card is exactly as before.
+  readonly property int lensOverflowMain: magnify
+    ? Math.max(0, Math.round(slot * zoom / 2) - pad) : 0
   readonly property int cardMain: Math.round(
-    (vertical ? Border.top(dockBorder) : Border.left(dockBorder)) + pad + contentLength + pad
+    (vertical ? Border.top(dockBorder) : Border.left(dockBorder))
+    + pad + contentLength + lensOverflowMain * 2 + pad
     + (vertical ? Border.bottom(dockBorder) : Border.right(dockBorder)))
   readonly property int cardCross: Math.round(
     (vertical ? Border.left(dockBorder) : Border.top(dockBorder)) + pad + slot + pad
@@ -956,8 +990,16 @@ Item {
       total += Util.isPlainObject(it) && (it.spacer === true || it.__divider === true) ? ruleWidth : sv
     }
     total += Math.max(0, n - 1) * gap
-    var cardMain = Border.left(dockBorder) + pad + total + pad + Border.right(dockBorder)
-    var cardCross = Border.top(dockBorder) + pad + sv + pad + Border.bottom(dockBorder)
+    // Same lens reserve as cardMain, measured at this slot size — a bigger
+    // slot can reach further past the row's ends. On a vertical dock the
+    // main axis is y, so the card's main-axis borders are top/bottom.
+    var lensOverflow = magnify ? Math.max(0, Math.round(sv * z / 2) - pad) : 0
+    var cardMain = (vertical ? Border.top(dockBorder) : Border.left(dockBorder))
+      + pad + total + lensOverflow * 2 + pad
+      + (vertical ? Border.bottom(dockBorder) : Border.right(dockBorder))
+    var cardCross = (vertical ? Border.left(dockBorder) : Border.top(dockBorder))
+      + pad + sv + pad
+      + (vertical ? Border.right(dockBorder) : Border.bottom(dockBorder))
     var zoomOverflow = Math.round(sv * z * (0.5 + zoomRaise)) + Style.space(4)
     var labelBand = !labels ? zoomOverflow
       : vertical ? Style.space(220) + Style.spacing.sm + zoomOverflow
@@ -985,7 +1027,6 @@ Item {
   readonly property int crossAxisLen: vertical ? windowWidth : windowHeight
   readonly property int cardCrossLen: cardCross
   readonly property int hitCross: edgeFirst ? 0 : Math.max(0, crossAxisLen - edgeGap - cardCrossLen)
-  readonly property int cardCrossPos: edgeFirst ? edgeGap : Math.max(0, crossAxisLen - edgeGap - cardCrossLen)
   // The inward face of the card: where popups hang off.
   readonly property int cardInnerFace: edgeFirst ? edgeGap + cardCross : labelBand
 
@@ -1047,7 +1088,6 @@ Item {
   property bool revealed: false
 
   property string hoveredLabel: ""
-  property int hoveredIndex: -1
   // Main-axis centre of the hovered icon, in window coordinates.
   property real hoveredCenter: 0
 
@@ -1095,6 +1135,12 @@ Item {
     } else {
       hoveredLabel = ""
       pointerInside = false
+      // The pointer is gone from the dock, so the monitor it named is no
+      // longer a fact about "where the dock belongs". Left set, it would
+      // stick for the rest of the session and keep every other output's
+      // showWhenEmpty pin (and any IPC summon) aimed at the last monitor
+      // the pointer happened to touch.
+      activeScreen = ""
       contextMenu.close()
       settingsWindow.close()
     }
@@ -1118,8 +1164,8 @@ Item {
   // enabled, the dock stays hidden if any window on its workspace overlays
   // the card's area on screen (fullscreen windows always count). The check
   // runs on a short poll — geometry arrives over Hyprland IPC, which has no
-  // reactive channel — and only bites while something is hovering the
-  // reveal, so it never burns cycles when the dock is up and idle.
+  // reactive channel — and only while the dock is up or being hovered, so
+  // an idle dock costs nothing.
 
   // The region of the target output that the card would cover when
   // revealed: an edge band as thick as the card and its edge gap. Windows
@@ -1225,7 +1271,12 @@ Item {
     id: dodgeTimer
     interval: 150
     repeat: true
+    // Only poll while the answer can change anything: the dock is idle and
+    // closed with nothing hovering it, no window appearing or moving over the
+    // edge can reveal it. `triggeredOnStart` makes the first check land as
+    // soon as the pointer arrives rather than up to 150 ms later.
     running: root.dodge && autohide
+      && (root.revealed || hotspotHovers > 0 || dockHovers > 0)
     triggeredOnStart: true
     onTriggered: root.dodgeBlocked = root.dodgeBlockedNow()
   }
@@ -1460,16 +1511,18 @@ Item {
         bottom: (root.vertical  && !span && root.align === "end")   ? root.edgeGap : 0
       }
 
-      implicitWidth:  root.vertical ? root.hotspotHeight : (span ? 0 : root.cardMain)
-      implicitHeight: root.vertical ? (span ? 0 : root.cardMain) : root.hotspotHeight
+      implicitWidth:  root.vertical ? root.hotspotHeight : (span ? modelData.width : root.cardMain)
+      implicitHeight: root.vertical ? (span ? modelData.height : root.cardMain) : root.hotspotHeight
       // Bind the size explicitly: layer-shell surfaces pick up their size at
       // map time from implicit sizes, but don't re-read later implicit
       // changes. An explicit width/height tracks every item-set settle, so
-      // the trigger zone hugs the card as it grows or shrinks. `span` keeps
-      // the full-length pixel unpinned — the two side anchors already make
-      // it monitor-wide there.
-      width:  root.vertical ? root.hotspotHeight : (span ? undefined : root.cardMain)
-      height: root.vertical ? (span ? undefined : root.cardMain) : root.hotspotHeight
+      // the trigger zone hugs the card as it grows or shrinks. When the zone
+      // spans, it is pinned to the output's own length rather than left
+      // `undefined` — an unbound number in a real binding is a NaN waiting
+      // to happen, and the two side anchors agree with the output length
+      // anyway.
+      width:  root.vertical ? root.hotspotHeight : (span ? modelData.width : root.cardMain)
+      height: root.vertical ? (span ? modelData.height : root.cardMain) : root.hotspotHeight
 
       // The handler needs an Item to attach to; a pointer handler parented
       // straight to the window never receives anything.
@@ -1612,7 +1665,15 @@ Item {
             counted = hovered
             root.dockHovers += hovered ? 1 : -1
             root.pointerInside = hovered
-            if (hovered) root.activeScreen = dockWindow.screenName
+            if (hovered) {
+              root.activeScreen = dockWindow.screenName
+            } else if (root.dockHovers === 0 && root.hotspotHovers === 0) {
+              // Last hover of either surface gone: nothing on screen is
+              // asking for this monitor any more, so stop naming it (the
+              // dock closing clears it too — this is the path for a pointer
+              // that walks off the screen while the dock is still open).
+              root.activeScreen = ""
+            }
           }
 
           // The lens's input: every move inside the strip reports the
@@ -1789,12 +1850,18 @@ Item {
     function hide(): string { root.close(); return "ok" }
     function toggle(): string { if (root.revealed) root.close(); else root.open(); return "ok" }
 
-    // Fire a pinned slot without the pointer, so a keybinding can reach one.
-    // Slots are 1-based and count spacers, matching the items[] order.
+    // Fire a slot without the pointer, so a keybinding can reach one. Slots are
+    // 1-based over the *visible* row — displayItems, rules and the derived
+    // running section included, in the same order and on the same indices the
+    // context menu's `menu` uses, so "slot 3" means the same icon to a
+    // keybinding as it does to the eye. (A `when`-hidden item takes no slot,
+    // which is what the user sees too.)
     function launch(slot: string): string {
       var i = Math.round(Number(slot)) - 1
-      if (!(i >= 0 && i < root.items.length)) return "no such slot"
-      var item = root.items[i]
+      if (!(i >= 0 && i < root.displayItems.length)) return "no such slot"
+      var item = root.displayItems[i]
+      if (!Util.isPlainObject(item) || item.spacer === true || item.__divider === true)
+        return "no such slot"
       root.activate(item, root.desktopEntry(item))
       return "ok"
     }

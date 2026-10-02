@@ -2,13 +2,20 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Plugin-local slider for the dock's settings popup, copied from qs.Ui's
-// PanelSlider with the mouse-wheel handler removed. The shared component
-// wheels to adjust a value (used by the audio panels), but here the slider
-// lives inside a scrollable settings popup, so wheeling to scroll the page
-// must never nudge the value under the cursor. Wheel events over this
-// slider are not handled, so they bubble up to the ScrollView and scroll
-// the page; the value only moves by click-and-drag.
+// Plugin-local slider for the dock's settings popup, based on qs.Ui's
+// PanelSlider. Two deliberate departures from it:
+//
+//  • No mouse-wheel handler. The shared component wheels to adjust a value
+//    (used by the audio panels), but here the slider lives inside a
+//    scrollable settings popup, so wheeling to scroll the page must never
+//    nudge the value under the cursor. Wheel events over this slider are not
+//    handled, so they bubble up to the ScrollView and scroll the page; the
+//    value only moves by click-and-drag.
+//
+//  • `step` is actually applied, and the released value is held until the
+//    write comes back. PanelSlider leaves both to its caller, which is
+//    invisible when the value is held in memory but not when every edit
+//    round-trips through a configurator process and a config file reload.
 Item {
   id: root
 
@@ -16,6 +23,8 @@ Item {
   property real value: 0
   property real minimum: 0
   property real maximum: 1
+  // Detents along the track. A step of 0 (or 1) means "continuous"; anything
+  // larger quantises the value to multiples of it, measured from `minimum`.
   property real step: 0.05
   property bool integer: false
   property color trackColor: bar ? Style.selectedFillFor(bar.foreground, Color.accent) : "#333"
@@ -28,19 +37,31 @@ Item {
 
   // macOS-style notches. When > 1, that many evenly-spaced tick marks are cut
   // into the track (drawn in the panel background color, so only the part
-  // crossing the track shows). Purely visual — snapping is the caller's job via
-  // `integer`/`step` or an index-based value. Default 0 leaves the track plain.
+  // crossing the track shows). Default 0 leaves the track plain.
   property int tickCount: 0
   property color tickColor: bar ? bar.background : Color.background
 
-  onValueChanged: if (!dragging) liveValue = value
+  // The written value comes back through the settings popup, and only after a
+  // configurator run has rewritten shell.json and the shell has re-read it.
+  // Snapping `liveValue` to `value` on release would animate the knob all the
+  // way back to the pre-drag number and then jump forward again a frame or two
+  // later, so the dragged value is held instead — with a watchdog underneath
+  // it: if the write never comes back (the configurator died), fall back to
+  // what the config actually holds rather than leaving the knob lying.
+  Timer {
+    id: settle
+    interval: 1500
+    onTriggered: if (!root.dragging && root.liveValue !== root.value) root.liveValue = root.value
+  }
+
+  onValueChanged: {
+    if (dragging) return
+    liveValue = value
+    settle.stop()
+  }
 
   signal moved(real value)
   signal released(real value)
-
-  // Right-click is a secondary action on the whole track — audio uses it to
-  // mute the channel the slider belongs to. Dragging stays left-button only.
-  signal rightClicked()
 
   implicitWidth: Style.space(200)
   implicitHeight: Math.max(Style.space(22), knobSize + Style.spacing.md)
@@ -114,11 +135,16 @@ Item {
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    acceptedButtons: Qt.LeftButton
 
     function valueFromX(x) {
       var clamped = Math.max(0, Math.min(track.width, x))
       var raw = root.minimum + (clamped / track.width) * root.range
+      // Snap to the caller's detents. `step` is honoured here rather than
+      // left to the caller: the dock's sliders declare steps of 2 px / 5%
+      // and were quietly producing values like 39 px and 47%.
+      if (root.step > 0 && root.step < root.range)
+        raw = root.minimum + Math.round((raw - root.minimum) / root.step) * root.step
       if (root.integer) raw = Math.round(raw)
       return Math.max(root.minimum, Math.min(root.maximum, raw))
     }
@@ -130,9 +156,6 @@ Item {
       root.liveValue = next
       root.moved(next)
     }
-    onClicked: function(mouse) {
-      if (mouse.button === Qt.RightButton) root.rightClicked()
-    }
     onPositionChanged: function(mouse) {
       if (!root.dragging) return
       var next = valueFromX(mouse.x)
@@ -142,8 +165,9 @@ Item {
     onReleased: function(mouse) {
       if (mouse.button !== Qt.LeftButton) return
       root.dragging = false
-      root.released(root.liveValue)
-      root.liveValue = root.value
+      var v = root.liveValue
+      root.released(v)
+      settle.start()
     }
   }
 }
