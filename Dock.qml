@@ -198,6 +198,11 @@ Item {
   readonly property var items: Array.isArray(config.items) ? config.items : []
 
   readonly property bool autohide: flag("autohide", true)
+  readonly property bool primaryOnly: flag("primaryOnly", false)
+  readonly property string primaryScreenName: {
+    var screens = Qt.application.screens
+    return screens.length > 0 ? String(screens[0].name || "") : ""
+  }
   readonly property bool dodge: flag("dodge", true)
   // Edge-pressure reveal: with `pressure` on, the reveal delay collapses to
   // zero so merely brushing the edge snaps the dock out — dash2dock's
@@ -1110,6 +1115,7 @@ Item {
   // outright; a summon over IPC has no pointer to go on, so it falls back to
   // the focused monitor.
   readonly property string targetScreen: {
+    if (root.primaryOnly) return root.primaryScreenName
     if (root.activeScreen !== "") return root.activeScreen
     var focused = Hyprland.focusedMonitor
     return focused ? String(focused.name || "") : ""
@@ -1482,7 +1488,7 @@ Item {
       required property var modelData
 
       screen: modelData
-      visible: root.active
+      visible: root.active && (!root.primaryOnly || String(modelData.name || "") === root.primaryScreenName)
       color: "transparent"
       // Reserve nothing, but respect what others reserve: the bar's
       // exclusive zone pushes the zone (and the dock) off the bar, so a
@@ -1574,7 +1580,14 @@ Item {
         || (root.revealed && (root.targetScreen === "" || root.targetScreen === screenName))
 
       screen: modelData
-      visible: root.active
+      visible: root.active && (!root.primaryOnly || screenName === root.primaryScreenName)
+      onVisibleChanged: {
+        if (visible) return
+        if (contextMenu.anchorCell && contextMenu.anchorCell.QsWindow.window === dockWindow)
+          contextMenu.close()
+        if (settingsWindow.anchorCell && settingsWindow.anchorCell.QsWindow.window === dockWindow)
+          settingsWindow.close()
+      }
       color: "transparent"
       exclusionMode: ExclusionMode.Normal
       exclusiveZone: 0

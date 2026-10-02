@@ -20,6 +20,7 @@
   "glowAmount": 0.5,
   "glowFocus": "full",
   "autohide": true,
+  "primaryOnly": false,
   "dodge": true,
   "pressure": true,
   "hotspotHeight": 6,

@@ -131,6 +131,16 @@ check "set refuses items" 1 "$(cfg_rc set items '[]')"
 check "set rejects non-JSON" 1 "$(cfg_rc set iconSize 44abc)"
 check "nothing was written" "$BASE_CANON" "$(whole)"
 
+sandbox "$BASE"
+check "primaryOnly is disabled in the shipped defaults" "false" "$(jq -r '.primaryOnly' "$REPO/config/shell.dock.json")"
+cfg set primaryOnly true >/dev/null
+check "set enables primaryOnly" "true" "$(field '.primaryOnly')"
+check "primaryOnly leaves other settings alone" "$BASE_CANON" "$(jq -cS '.plugins |= map(if .id == "animated.dock" then del(.primaryOnly) else . end)' "$(cfgfile)")"
+cfg set primaryOnly false >/dev/null
+check "set disables primaryOnly" "false" "$(field '.primaryOnly')"
+cfg set primaryOnly null >/dev/null
+check "unsetting primaryOnly restores the original config" "$BASE_CANON" "$(whole)"
+
 # -------------------------------------------------------------- integrity
 echo
 echo "config integrity"
@@ -224,7 +234,7 @@ help_lists_keys() {
   local out missing=0 k
   out=$("$CONFIG" --help)
   for k in animation autohide backgroundOpacity border cornerShape edge edgeGap \
-    fullWidth gaussianZoom glyphScale iconSize labels magnify monochrome \
+    fullWidth gaussianZoom glyphScale iconSize labels magnify monochrome primaryOnly \
     runningIndicator showWhenEmpty spacing tiles tooltips zoom zoomRaise; do
     grep -qw -- "$k" <<<"$out" || missing=1
   done

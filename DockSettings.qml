@@ -581,6 +581,16 @@ PopupWindow {
 
       DockToggle {
         width: settings.contentWidth
+        label: "Only on primary monitor"
+        description: "Show the dock and its edge hotspot only on the primary monitor."
+        stored: settings.dock.flag("primaryOnly", false)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onRequestWrite: function(value) { settings.dock.applySetting("primaryOnly", String(value)) }
+      }
+
+      DockToggle {
+        width: settings.contentWidth
         label: "Show icon name on hover"
         description: "Show the icon's name when hovering over it."
         stored: settings.dock.flag("tooltips", true)
