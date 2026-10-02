@@ -27,7 +27,7 @@ KNOWN_KEYS=(
   align animation autohide backgroundOpacity border borderOpacity cornerRadius
   cornerShape dodge edge edgeGap fullWidth gaussianZoom glyphColor glyphScale
   hideDelay hotspotFullWidth hotspotHeight iconOpacity iconSize labels magnify
-  matchBarCorners matchBarGlow matchBarOpacity monochrome padding pressure
+  matchBarCorners matchBarGlow matchBarOpacity monochrome padding pressure primaryOnly
   revealDelay runningIndicator showRunning showWhenEmpty spacing tileInset
   tileOpacity tileRadius tiles tintIcons tintRunning tooltips zoom zoomRaise
 )
