@@ -57,6 +57,55 @@ import qs.Ui
 Item {
   id: root
 
+  // ============================================================ CONSTANTS
+  // All magic numbers extracted here for maintainability and tuning.
+  // Fisheye lens parameters
+  readonly property real lensReachFactor: 1.9          // T = slot * lensReachFactor
+  readonly property real gaussianSigmaDivisor: 3.0     // sigma = T / gaussianSigmaDivisor
+  readonly property real gaussianClampThreshold: 0.01  // g > threshold to apply boost
+  readonly property real easingFactor: 0.3              // per-frame easing toward targets
+  readonly property real idleScaleEpsActive: 0.001    // sub-pixel threshold when lens active
+  readonly property real idleMoveEpsActive: 0.001     // sub-pixel threshold when lens active
+  readonly property real idleScaleEpsIdle: 0.012      // "close enough" when lens inactive
+  readonly property real idleMoveEpsIdle: 0.5         // 0.5px when lens inactive
+  // Reveal animation
+  readonly property int revealSlideDuration: 190       // ms, slide in/out
+  readonly property int dodgePollInterval: 150         // ms, intelli-hide check
+  // Label flash
+  readonly property int labelFlashDuration: 900        // ms, hovered label timeout
+  // Hover magnify (when fisheye off)
+  readonly property real hoverScale: 1.12               // 12% pop on hover
+  // Drag
+  readonly property real dragGapFactor: 1.0            // gap multiplier for dragged cell
+  // Icon lift
+  readonly property real zoomRaiseDefault: 0.5         // dash2dock ANIM_ICON_RAISE
+  // Glyph normalization
+  readonly property real glyphInkTargetDefault: 0.58  // fraction of slot for glyph ink
+  readonly property real glyphFallbackScale: 0.66      // fallback glyph size fraction
+  // Tile defaults
+  readonly property real tileRadiusFactor: 0.23        // tileRadius = slot * factor
+  readonly property real tileInsetDefault: 0.76        // artwork inset inside tile
+  readonly property real tileOpacityDefault: 0.16      // tile background opacity
+  // Pin badge
+  readonly property real pinBadgeSizeFactor: 0.4      // pin badge = slot * factor
+  readonly property real pinBadgeMarginFactor: 0.2    // negative margin = size * factor
+  // Count badge
+  readonly property real countBadgeHeightFactor: 0.32 // count badge height = slot * factor
+  readonly property real countBadgeFontFactor: 0.68   // count badge font = height * factor
+  // Glow
+  readonly property int glowRoomBase: 10               // glow room in theme spaces
+  readonly property var glowStrokeOpacities: [0.50, 0.32, 0.18, 0.10] // per-layer opacity
+  // Hotspot
+  readonly property int hotspotHeightDefault: 2        // theme spaces
+  // Edge gap
+  readonly property int edgeGapMin: 4                  // theme spaces minimum
+  // Label band
+  readonly property int labelBandVerticalBase: 220    // theme spaces for vertical label band
+  // Window slack
+  readonly property int labelSlackHorizontal: 240      // px for horizontal label overflow
+  // Settle timer (DragSlider)
+  readonly property int settleWatchdogMs: 5000         // max wait for config reload
+
   // Injected by the shell's panel loader.
   property var shell: null
   property var manifest: null
@@ -217,7 +266,7 @@ Item {
   readonly property bool magnify: flag("magnify", true)
   readonly property bool showWhenEmpty: flag("showWhenEmpty", false)
   readonly property bool hotspotFullWidth: flag("hotspotFullWidth", false)
-  readonly property int hotspotHeight: Math.max(1, Style.space(num("hotspotHeight", 2)))
+  readonly property int hotspotHeight: Math.max(1, Style.space(num("hotspotHeight", hotspotHeightDefault)))
   readonly property int revealDelay: pressure ? 0 : Math.round(num("revealDelay", 90))
   readonly property int hideDelay: Math.round(num("hideDelay", 300))
 
@@ -228,7 +277,7 @@ Item {
   readonly property bool gaussianZoom: flag("gaussianZoom", true)
   // How much of its growth an icon "lifts" out of the bar (dash2dock
   // ANIM_ICON_RAISE is 0.5).
-  readonly property real zoomRaise: fraction("zoomRaise", 0.5)
+  readonly property real zoomRaise: fraction("zoomRaise", zoomRaiseDefault)
   // Animation length of the reflow, ms.
   readonly property int animMs: Math.round(num0("animation", 110))
 
@@ -259,7 +308,7 @@ Item {
     Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2))))
   // How far past the card the halo may bloom; the window reserves this much
   // room so the glow is never clipped by the surface edge.
-  readonly property int glowRoom: glowEnabled ? Math.max(1, Style.space(10)) : 0
+  readonly property int glowRoom: glowEnabled ? Math.max(1, Style.space(glowRoomBase)) : 0
   // Extra room along the edge: both flanks for a centred card, one (the
   // non-corner side) for start/end. A full-width card ends at the screen
   // corners, so any extra would be off-screen — none.
@@ -722,11 +771,11 @@ Item {
     if (n === 0) return { scales: [], positions: [], length: 0 }
 
     var centers = baseCenters
-    var T = slot * 1.9
-    // Gaussian width: σ = T/3 puts the falloff at ~1.1% of its peak when a
+    var T = slot * lensReachFactor
+    // Gaussian width: σ = T/gaussianSigmaDivisor puts the falloff at ~1.1% of its peak when a
     // cell's centre sits on the quadratic's cut-off distance, so the bell
     // curve's asymptotic tail wears out inside the same reach.
-    var sigma = T / 3
+    var sigma = T / gaussianSigmaDivisor
     var boost = magnify ? zoom : 0
     var scales = new Array(n)
     var i
@@ -741,7 +790,7 @@ Item {
         // centre and peak are the pointer and zoom, so this is
         // scale = 1 + zoom·e^(−d²/2σ²). Cells past the reach clamp to 1.
         var g = Math.exp(-(d * d) / (2 * sigma * sigma))
-        if (g > 0.01) s = 1 + boost * g
+        if (g > gaussianClampThreshold) s = 1 + boost * g
       } else {
         var p = 1.0 - d / T
         if (p > 0) {
@@ -779,7 +828,7 @@ Item {
     var targets = computedTargets()
     ensureFishState()
 
-    var eased = 0.3
+    var eased = easingFactor
     var s = new Array(n)
     var p = new Array(n)
     var maxScaleDelta = 0
@@ -812,8 +861,8 @@ Item {
     // at 60 Hz under a motionless pointer. With the lens off, scale is only
     // "close enough"; the cells' own Behaviors finish the last of the
     // travel once the loop releases them.
-    var scaleEps = fisheyeActive ? 0.001 : 0.012
-    var moveEps = fisheyeActive ? 0.001 : 0.5
+    var scaleEps = fisheyeActive ? idleScaleEpsActive : idleScaleEpsIdle
+    var moveEps = fisheyeActive ? idleMoveEpsActive : idleMoveEpsIdle
     if (maxScaleDelta < scaleEps && maxMove < moveEps) {
       if (!fisheyeActive) {
         // Settled on the base layout: snap exactly onto it and stop.
@@ -880,12 +929,12 @@ Item {
   readonly property int ruleWidth: Math.max(1, Style.space(1))
 
   // Glyph ink is normalized to this fraction of the slot (see DockItem).
-  readonly property real glyphInkTarget: fraction("glyphScale", 0.58) > 0 ? fraction("glyphScale", 0.58) : 0.58
+  readonly property real glyphInkTarget: fraction("glyphScale", glyphInkTargetDefault) > 0 ? fraction("glyphScale", glyphInkTargetDefault) : glyphInkTargetDefault
 
   readonly property bool tiles: flag("tiles", false)
-  readonly property int tileRadiusPx: Math.round(root.slot * fraction("tileRadius", 0.23))
-  readonly property real tileInset: fraction("tileInset", 0.76)
-  readonly property real tileOpacity: fraction("tileOpacity", 0.16)
+  readonly property int tileRadiusPx: Math.round(root.slot * fraction("tileRadius", tileRadiusFactor))
+  readonly property real tileInset: fraction("tileInset", tileInsetDefault)
+  readonly property real tileOpacity: fraction("tileOpacity", tileOpacityDefault)
   readonly property real backgroundOpacity: fraction("backgroundOpacity", 1.0)
   // When on, the taskbar's background opacity is kept equal to the dock's
   // `backgroundOpacity` setting (written as `bar.backgroundOpacity` in
@@ -954,7 +1003,7 @@ Item {
   readonly property int zoomOverflow: Math.round(slot * zoom * (0.5 + zoomRaise)) + Style.space(4)
   readonly property int labelHeight: Math.round(Style.font.bodySmall + Style.spacing.sm * 2 + Style.space(2))
   readonly property int labelBand: !labels ? zoomOverflow
-    : vertical ? Style.space(220) + Style.spacing.sm + zoomOverflow
+    : vertical ? Style.space(labelBandVerticalBase) + Style.spacing.sm + zoomOverflow
                : labelHeight + Style.spacing.sm + zoomOverflow
 
   // Gap between card and screen edge. The window still reaches the edge —
@@ -962,7 +1011,7 @@ Item {
   // drops from a stray pixel. Left unset it tracks the theme's edge gap.
   readonly property int edgeGap: root.config.edgeGap !== undefined
     ? Style.space(num0("edgeGap", 0))
-    : Math.max(Style.gapsOut, Style.space(4))
+    : Math.max(Style.gapsOut, Style.space(edgeGapMin))
 
   // Window extents. Cross: edge strip + card + label band. Main: the card
   // plus slack for a label centred on an end icon to spill into.
@@ -1002,10 +1051,10 @@ Item {
       + (vertical ? Border.right(dockBorder) : Border.bottom(dockBorder))
     var zoomOverflow = Math.round(sv * z * (0.5 + zoomRaise)) + Style.space(4)
     var labelBand = !labels ? zoomOverflow
-      : vertical ? Style.space(220) + Style.spacing.sm + zoomOverflow
+      : vertical ? Style.space(labelBandVerticalBase) + Style.spacing.sm + zoomOverflow
                  : labelHeight + Style.spacing.sm + zoomOverflow
     return {
-      main: Math.round(cardMain + (labels && !vertical ? Style.space(240) : 0)),
+      main: Math.round(cardMain + (labels && !vertical ? Style.space(labelSlackHorizontal) : 0)),
       cross: Math.round(labelBand + cardCross + edgeGap)
     }
   }
@@ -1269,7 +1318,7 @@ Item {
 
   Timer {
     id: dodgeTimer
-    interval: 150
+    interval: dodgePollInterval
     repeat: true
     // Only poll while the answer can change anything: the dock is idle and
     // closed with nothing hovering it, no window appearing or moving over the
@@ -1466,7 +1515,7 @@ Item {
 
   Timer {
     id: labelFlash
-    interval: 900
+    interval: labelFlashDuration
     onTriggered: if (root.hoveredLabel !== "") root.hoveredLabel = ""
   }// ---------------------------------------------------------- reveal zone
   //
@@ -1631,7 +1680,7 @@ Item {
       // 0 = docked, 1 = parked off-screen.
       property real slide: dockWindow.shown ? 0 : 1
       Behavior on slide {
-        NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: revealSlideDuration; easing.type: Easing.OutCubic }
       }
 
       // Parked = pushed out past its own edge. The start/end margins keep
@@ -1735,7 +1784,7 @@ Item {
               color: "transparent"
               border.width: 2
               border.color: Util.alpha(root.glowColor,
-                root.glowStrength * [0.50, 0.32, 0.18, 0.10][step])
+                root.glowStrength * glowStrokeOpacities[step])
             }
           }
         }

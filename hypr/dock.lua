@@ -13,11 +13,10 @@
 --
 -- Both settings below are session-global: `decoration.blur` applies to
 -- everything, and the blanket no_blur rule overrides any other rule (or
--- plugin) that wants a blurred window. Set DOCK_BLUR to false if you manage
--- window blur yourself, or just delete this file — the dock works fine
--- without it, it only loses the frosted background.
+-- plugin) that wants a blurred window. The blur setting is controlled by the
+-- dock's `blur` config key (default: true). Set DOCK_BLUR env var to override.
 
-local DOCK_BLUR = true
+local DOCK_BLUR = os.getenv("DOCK_BLUR") ~= "false"
 
 if DOCK_BLUR then
   hl.config({

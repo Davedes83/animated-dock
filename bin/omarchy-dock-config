@@ -22,14 +22,61 @@ DOCK='(.plugins[] | select(.id=="animated.dock"))'
 # the taskbar-sync subcommands. `set` refuses anything outside this list, so a
 # typo fails loudly instead of quietly parking a dead key in shell.json, which
 # is the only place the dock's settings live and which the whole shell reads.
-# The --help output prints this same list, so the two cannot drift.
+# The --help output prints this same list with descriptions, so the two cannot drift.
 KNOWN_KEYS=(
-  align animation autohide backgroundOpacity border borderOpacity cornerRadius
+  align animation autohide backgroundOpacity border borderOpacity blur cornerRadius
   cornerShape dodge edge edgeGap fullWidth gaussianZoom glyphColor glyphScale
   hideDelay hotspotFullWidth hotspotHeight iconOpacity iconSize labels magnify
   matchBarCorners matchBarGlow matchBarOpacity monochrome padding pressure
   revealDelay runningIndicator showRunning showWhenEmpty spacing tileInset
   tileOpacity tileRadius tiles tintIcons tintRunning tooltips zoom zoomRaise
+)
+
+# Descriptions for each known key, used by --help. Must stay in sync with KNOWN_KEYS.
+declare -A KEY_DESC=(
+  [align]="Alignment along the edge: start, center, end"
+  [animation]="Animation duration in ms (0 = instant)"
+  [autohide]="Auto-hide the dock when not hovered"
+  [backgroundOpacity]="Dock background opacity (0-1 or percentage)"
+  [border]="Show border around the dock card"
+  [borderOpacity]="Border opacity (0-1 or percentage)"
+  [blur]="Enable background blur (frosted glass effect)"
+  [cornerRadius]="Corner radius in theme spaces (for 'rounded' shape)"
+  [cornerShape]="Corner shape: rounded, square, or pill"
+  [dodge]="Intelli-hide: keep dock hidden under windows"
+  [edge]="Screen edge: top, bottom, left, right"
+  [edgeGap]="Gap between card and screen edge (theme spaces)"
+  [fullWidth]="Span the full monitor width"
+  [gaussianZoom]="Use Gaussian (bell-curve) zoom falloff instead of quadratic"
+  [glyphColor]="Glyph color: accent or text"
+  [glyphScale]="Glyph ink size as fraction of slot"
+  [hideDelay]="Delay before hiding in ms"
+  [hotspotFullWidth]="Make hotspot span full monitor width"
+  [hotspotHeight]="Hotspot height in theme spaces"
+  [iconOpacity]="Icon opacity (0-1)"
+  [iconSize]="Icon size in px"
+  [labels]="Show icon labels on hover"
+  [magnify]="Enable fisheye magnification"
+  [matchBarCorners]="Sync taskbar corners with dock"
+  [matchBarGlow]="Sync taskbar glow with dock"
+  [matchBarOpacity]="Sync taskbar opacity with dock"
+  [monochrome]="Force all icons to monochrome"
+  [padding]="Inner padding around icons (theme spaces)"
+  [pressure]="Edge-pressure reveal (zero delay)"
+  [revealDelay]="Delay before revealing in ms"
+  [runningIndicator]="Running indicator style: dot, line, none"
+  [showRunning]="Show running apps section"
+  [showWhenEmpty]="Show dock on empty workspaces"
+  [spacing]="Spacing between icons (theme spaces)"
+  [tileInset]="Tile artwork inset fraction"
+  [tileOpacity]="Tile background opacity"
+  [tileRadius]="Tile corner radius fraction"
+  [tiles]="Show tile background behind icons"
+  [tintIcons]="Tint pinned icons to theme color"
+  [tintRunning]="Tint running icons to theme color"
+  [tooltips]="Show tooltip with icon name on hover"
+  [zoom]="Magnification strength (0-1 or percentage)"
+  [zoomRaise]="How much icons lift when magnified (0-1)"
 )
 # The plugin's own dir, resolved through any symlink (the configurator is
 # often linked into ~/.local/bin), so the bundled style defaults travel with
@@ -428,8 +475,8 @@ cmd_seed_defaults() {
 
   local defaults merged
   defaults=$(seeded_dock_entry) || exit 1
-  # The repo's default keys are defaults: an existing entry is merged over by
-  # them, not the other way round.
+  # The repo's default keys are defaults: user entry keys override them.
+  # jq's * operator merges right into left, so $defaults * $e means user entry wins.
   merged=$(jq -c --argjson defaults "$defaults" \
     '(.plugins[] | select(.id == "animated.dock")) as $e | $defaults * $e' "$CFG" 2>/dev/null) ||
     die "seed-defaults: could not merge with the existing entry."
@@ -551,27 +598,43 @@ import shutil, sys
 p = sys.argv[1]
 src = open(p, encoding="utf-8").read()
 
+# Glow stroke opacities (must match Dock.qml GLOW_STROKE_OPACITIES)
+GLOW_STROKE_OPACITIES = [0.50, 0.32, 0.18, 0.10]
+
+import re
+
 def patched(marker):
     return marker in src
+
+def find_once(pattern, label):
+    """Find a pattern exactly once using regex with flexible whitespace."""
+    matches = list(re.finditer(pattern, src, re.MULTILINE))
+    if len(matches) != 1:
+        print(f"patch_bar: {label} anchor not found exactly once (count={len(matches)}) —"
+              " this bar version is not supported", file=sys.stderr)
+        sys.exit(1)
+    return matches[0]
+
+def replace_once(pattern, replacement, label):
+    """Replace a pattern exactly once using regex."""
+    matches = list(re.finditer(pattern, src, re.MULTILINE))
+    if len(matches) != 1:
+        print(f"patch_bar: {label} anchor not found exactly once (count={len(matches)}) —"
+              " this bar version is not supported", file=sys.stderr)
+        sys.exit(1)
+    m = matches[0]
+    return src[:m.start()] + replacement + src[m.end():]
 
 wants_opacity = not patched("function setBackgroundOpacity")
 wants_corners = not patched("function setBarCorners")
 wants_glow = not patched("function setBarGlow")
 
-prop_anchor = "  property bool transparent: false"
-call_anchor = "    setRequestedTransparency(config.transparent === true)"
-fn_anchor = "  function restoreForegroundAnimation()"
-color_anchor = 'color: root.transparent ? "transparent" : root.background'
-color_next = "    surfaceFormat.opaque: false"
-color_pair = color_anchor + "\n" + color_next
-
-
-def once(anchor, label):
-    n = src.count(anchor)
-    if n != 1:
-        print(f"patch_bar: {label} anchor not found exactly once (count={n}) —"
-              " this bar version is not supported", file=sys.stderr)
-        sys.exit(1)
+# Use regex patterns with flexible whitespace for robustness
+prop_anchor_pattern = r'^\s*property\s+bool\s+transparent\s*:\s*false\s*$'
+call_anchor_pattern = r'^\s*setRequestedTransparency\(config\.transparent\s*===\s*true\)\s*$'
+fn_anchor_pattern = r'^\s*function\s+restoreForegroundAnimation\(\)\s*$'
+color_anchor_pattern = r'^\s*color\s*:\s*root\.transparent\s*\?\s*"transparent"\s*:\s*root\.background\s*$'
+color_next_pattern = r'^\s*surfaceFormat\.opaque\s*:\s*false\s*$'
 
 
 if not (wants_opacity or wants_corners or wants_glow):
@@ -579,154 +642,71 @@ if not (wants_opacity or wants_corners or wants_glow):
 
 
 if wants_opacity:
-    once(prop_anchor, "transparent-property")
-    once(call_anchor, "setRequestedTransparency-call")
-    once(fn_anchor, "restoreForegroundAnimation-function")
-    if src.count(color_pair) != 1:
-        print("patch_bar: main taskbar background line not found exactly once —"
-              " this bar version is not supported", file=sys.stderr)
-        sys.exit(1)
-
-    prop = ("\n"
-            "  // Bar background translucency, driven by `bar.backgroundOpacity` in\n"
-            "  // shell.json (0\u20131, or a percentage above 1). Missing/invalid = 1.0\n"
-            "  // (the normal opaque bar). The dock's \"Sync taskbar opacity\" setting\n"
-            "  // writes this key. Independent of `transparent`, which hard-overrides\n"
-            "  // the surface to fully transparent.\n"
-            "  property real backgroundOpacity: 1.0")
-    i = src.index(prop_anchor) + len(prop_anchor)
+    m = find_once(prop_anchor_pattern, "transparent-property")
+    i = m.end()
     src = src[:i] + prop + src[i:]
 
-    j = src.index(call_anchor) + len(call_anchor)
+    m = find_once(call_anchor_pattern, "setRequestedTransparency-call")
+    j = m.end()
     src = src[:j] + "\n    root.setBackgroundOpacity(config.backgroundOpacity)" + src[j:]
 
-    fn = ("  function setBackgroundOpacity(value) {\n"
-          "    var n = Number(value)\n"
-          "    if (!isFinite(n) || n < 0) {\n"
-          "      root.backgroundOpacity = 1.0\n"
-          "      return\n"
-          "    }\n"
-          "    if (n > 1) n = n / 100\n"
-          "    root.backgroundOpacity = Math.min(1, n)\n"
-          "  }\n\n")
-    k = src.index(fn_anchor)
+    m = find_once(fn_anchor_pattern, "restoreForegroundAnimation-function")
+    k = m.start()
     src = src[:k] + fn + src[k:]
 
-    src = src.replace(
-        color_pair,
+    # Replace the color pair using regex
+    color_pair_pattern = color_anchor_pattern + r'\n' + color_next_pattern
+    src = re.sub(color_pair_pattern,
         'color: root.transparent ? "transparent" : Util.alpha(root.background, root.backgroundOpacity)\n'
-        + color_next,
-        1,
-    )
+        + '    surfaceFormat.opaque: false',
+        src, count=1)
 
 # Corner anchors refer to content introduced by the opacity edits above, so
 # they are verified (and applied) *after* those edits land.
 if wants_corners:
-    once("  property real backgroundOpacity: 1.0", "backgroundOpacity-property")
-    once("    root.setBackgroundOpacity(config.backgroundOpacity)", "setBackgroundOpacity-call")
-    once(fn_anchor, "restoreForegroundAnimation-function")
-    once("    color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
-         + "    surfaceFormat.opaque: false", "alpha-background-line")
-
-    corner_prop = ("\n"
-                   "  // Taskbar corner rounding, driven by `bar.cornerShape` and\n"
-                   "  // `bar.cornerRadius` in shell.json (radius in theme spaces,\n"
-                   "  // like the dock's cornerRadius). Missing shape = plain\n"
-                   "  // rectangle. The dock's \"Sync taskbar corners\" setting writes\n"
-                   "  // these keys.\n"
-                   "  property real barCornerRadius: 0")
-    i = src.index("  property real backgroundOpacity: 1.0") + len("  property real backgroundOpacity: 1.0")
+    m = find_once(r'^\s*property\s+real\s+backgroundOpacity\s*:\s*1\.0\s*$', "backgroundOpacity-property")
+    i = m.end()
     src = src[:i] + corner_prop + src[i:]
 
-    j = src.index("    root.setBackgroundOpacity(config.backgroundOpacity)") \
-        + len("    root.setBackgroundOpacity(config.backgroundOpacity)")
+    m = find_once(r'^\s*root\.setBackgroundOpacity\(config\.backgroundOpacity\)\s*$', "setBackgroundOpacity-call")
+    j = m.end()
     src = src[:j] + "\n    root.setBarCorners(config.cornerShape, config.cornerRadius)" + src[j:]
 
-    fn = ("  function setBarCorners(shape, radius) {\n"
-          "    var s = String(shape || \"\").toLowerCase()\n"
-          "    if (s !== \"square\" && s !== \"pill\" && s !== \"rounded\") {\n"
-          "      root.barCornerRadius = 0\n"
-          "      return\n"
-          "    }\n"
-          "    if (s === \"square\") {\n"
-          "      root.barCornerRadius = 0\n"
-          "    } else if (s === \"pill\") {\n"
-          "      root.barCornerRadius = Math.max(1, Math.round(root.barSize / 2))\n"
-          "    } else {\n"
-          "      root.barCornerRadius = Number(radius) > 0 ? Style.space(Number(radius)) : Style.cornerRadius\n"
-          "    }\n"
-          "  }\n\n")
-    k = src.index(fn_anchor)
+    m = find_once(fn_anchor_pattern, "restoreForegroundAnimation-function")
+    k = m.start()
     src = src[:k] + fn + src[k:]
 
-    src = src.replace(
-        "    color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
-        + "    surfaceFormat.opaque: false",
-        "    color: \"transparent\"\n"
-        "    surfaceFormat.opaque: false\n"
-        "\n"
-        "    // The surface is transparent; this shape paints the real background so\n"
-        "    // it can be rounded. Same color/opacity expression as the old window\n"
-        "    // color, radius from setBarCorners() (0 keeps the plain rectangle).\n"
-        "    Rectangle {\n"
-        "      id: barBackgroundSurface\n"
-        "      anchors.fill: parent\n"
-        "      color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
-        "      radius: root.barCornerRadius\n"
-        "    }\n",
-        1,
-    )
+    alpha_bg_pattern = r'^\s*color\s*:\s*root\.transparent\s*\?\s*"transparent"\s*:\s*Util\.alpha\(root\.background,\s*root\.backgroundOpacity\)\s*$\n^\s*surfaceFormat\.opaque\s*:\s*false\s*$'
+    m = find_once(alpha_bg_pattern, "alpha-background-line")
+    src = src[:m.start()] + (
+        '    color: "transparent"\n'
+        '    surfaceFormat.opaque: false\n'
+        '\n'
+        '    // The surface is transparent; this shape paints the real background so\n'
+        '    // it can be rounded. Same color/opacity expression as the old window\n'
+        '    // color, radius from setBarCorners() (0 keeps the plain rectangle).\n'
+        '    Rectangle {\n'
+        '      id: barBackgroundSurface\n'
+        '      anchors.fill: parent\n'
+        '      color: root.transparent ? "transparent" : Util.alpha(root.background, root.backgroundOpacity)\n'
+        '      radius: root.barCornerRadius\n'
+        '    }\n'
+    ) + src[m.end():]
 
 # Glow anchors refer to content introduced by the corners edits above (the
 # transparent window + barBackgroundSurface), so they are verified (and
 # applied) *after* those edits land.
 if wants_glow:
-    once("  property real barCornerRadius: 0", "barCornerRadius-property")
-    once("    root.setBarCorners(config.cornerShape, config.cornerRadius)", "setBarCorners-call")
-    once(fn_anchor, "restoreForegroundAnimation-function")
-
-    glow_prop = ("\n"
-                 "  // Taskbar border glow, driven by `bar.glow`, `bar.glowAmount` and\n"
-                 "  // `bar.glowFocus` in shell.json. The same 4-stroke halo the dock\n"
-                 "  // paints behind its card, drawn here behind the background surface.\n"
-                 "  // While enabled the window reserves barGlowRoom on the\n"
-                 "  // desktop-facing side so the bloom is not clipped; the docked edge\n"
-                 "  // sits flush at the screen edge and clips there, like the dock card\n"
-                 "  // does on its docked side. The dock's \"Sync taskbar glow\" setting\n"
-                 "  // writes these keys.\n"
-                 "  property bool barGlowEnabled: false\n"
-                 "  property real barGlowAmount: 0.5\n"
-                 "  property string barGlowFocus: \"full\"\n"
-                 "  readonly property color barGlowColor: Border.color(\n"
-                 "    Border.surfaceSpec(\"popups\", \"border\", Color.popups.border, Math.max(1, Style.space(2))))\n"
-                 "  readonly property int barGlowRoom: barGlowEnabled ? Math.max(1, Style.space(6)) : 0\n"
-                 "  // Focus slides the ring stack one pixel toward the emphasized edge.\n"
-                 "  // For a top-position bar \"bottom\" blooms into the reserved room\n"
-                 "  // (the desktop-facing underglow); \"top\" pushes at the flush\n"
-                 "  // screen edge, so it mostly clips there.\n"
-                 "  readonly property real barGlowShiftX: 0\n"
-                 "  readonly property real barGlowShiftY: root.vertical ? 0\n"
-                 "    : (root.barGlowFocus === \"bottom\" ? 1 : root.barGlowFocus === \"top\" ? -1 : 0)\n")
-    i = src.index("  property real barCornerRadius: 0") + len("  property real barCornerRadius: 0")
+    m = find_once(r'^\s*property\s+real\s+barCornerRadius\s*:\s*0\s*$', "barCornerRadius-property")
+    i = m.end()
     src = src[:i] + glow_prop + src[i:]
 
-    j = src.index("    root.setBarCorners(config.cornerShape, config.cornerRadius)") \
-        + len("    root.setBarCorners(config.cornerShape, config.cornerRadius)")
+    m = find_once(r'^\s*root\.setBarCorners\(config\.cornerShape,\s*config\.cornerRadius\)\s*$', "setBarCorners-call")
+    j = m.end()
     src = src[:j] + "\n    root.setBarGlow(config.glow, config.glowAmount, config.glowFocus)" + src[j:]
 
-    fn = ("  function setBarGlow(enabled, amount, focus) {\n"
-          "    root.barGlowEnabled = enabled === true\n"
-          "    var n = Number(amount)\n"
-          "    if (!isFinite(n) || n < 0) {\n"
-          "      root.barGlowAmount = 0.5\n"
-          "    } else {\n"
-          "      if (n > 1) n = n / 100\n"
-          "      root.barGlowAmount = Math.min(1, n)\n"
-          "    }\n"
-          "    var f = String(focus || \"\").toLowerCase()\n"
-          "    root.barGlowFocus = (f === \"top\" || f === \"bottom\") ? f : \"full\"\n"
-          "  }\n\n")
-    k = src.index(fn_anchor)
+    m = find_once(fn_anchor_pattern, "restoreForegroundAnimation-function")
+    k = m.start()
     src = src[:k] + fn + src[k:]
 
     # The halo blooms past the 30px surface, so while it is enabled the window
@@ -735,116 +715,53 @@ if wants_glow:
     # barSize tall by pinning the surface host to the docked edge. The autohide
     # park distance is bumped by the same amount so hiding still clears the
     # whole (taller) window.
-    m = src.count("? -root.barSize : 0")
+    m = len(re.findall(r'\?\s*-root\.barSize\s*:\s*0', src))
     if m != 4:
         print(f"patch_bar: bar-hide margins not found exactly four times (count={m}) —"
               " this bar version is not supported", file=sys.stderr)
         sys.exit(1)
-    src = src.replace("? -root.barSize : 0", "? -(root.barSize + root.barGlowRoom) : 0")
+    src = re.sub(r'\?\s*-root\.barSize\s*:\s*0', '? -(root.barSize + root.barGlowRoom) : 0', src)
 
-    old_implicit_w = "    implicitWidth: root.vertical ? root.barSize : 0"
-    old_implicit_h = "    implicitHeight: root.vertical ? 0 : root.barSize"
-    once(old_implicit_w, "implicitWidth-line")
-    once(old_implicit_h, "implicitHeight-line")
-    src = src.replace(old_implicit_w, "    implicitWidth: root.vertical ? root.barSize + root.barGlowRoom : 0", 1)
-    src = src.replace(old_implicit_h, "    implicitHeight: root.vertical ? 0 : root.barSize + root.barGlowRoom", 1)
+    m = find_once(r'^\s*implicitWidth:\s*root\.vertical\s*\?\s*root\.barSize\s*:\s*0\s*$', "implicitWidth-line")
+    src = src[:m.start()] + "    implicitWidth: root.vertical ? root.barSize + root.barGlowRoom : 0" + src[m.end():]
 
-    surface_block = ("    // The surface is transparent; this shape paints the real background so\n"
-                     "    // it can be rounded. Same color/opacity expression as the old window\n"
-                     "    // color, radius from setBarCorners() (0 keeps the plain rectangle).\n"
-                     "    Rectangle {\n"
-                     "      id: barBackgroundSurface\n"
-                     "      anchors.fill: parent\n"
-                     "      color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
-                     "      radius: root.barCornerRadius\n"
-                     "    }\n"
-                     "\n"
-                     "    WlrLayershell.namespace: \"omarchy-bar\"\n"
-                     "    WlrLayershell.layer: WlrLayer.Top\n"
-                     "\n"
-                     "    Loader {\n"
-                     "      anchors.fill: parent\n"
-                     "      sourceComponent: root.vertical ? verticalBar : horizontalBar\n"
-                     "\n"
-                     "      // A child of the loader, not a sibling of the sections: an ancestor stays\n"
-                     "      // hovered while the pointer is over a widget, where a sibling would lose\n"
-                     "      // hover to the section the pointer entered.\n"
-                     "      HoverHandler {\n"
-                     "        onHoveredChanged: root.setBarHovered(hovered)\n"
-                     "        // Unplugging a monitor destroys its bar without a leave event, which\n"
-                     "        // would strand this surface's tally and hold the peek open for good.\n"
-                     "        Component.onDestruction: if (hovered) root.setBarHovered(false)\n"
-                     "      }\n"
-                     "    }\n")
-    once(surface_block, "bar-surface+loader block")
+    m = find_once(r'^\s*implicitHeight:\s*root\.vertical\s*\?\s*0\s*:\s*root\.barSize\s*$', "implicitHeight-line")
+    src = src[:m.start()] + "    implicitHeight: root.vertical ? 0 : root.barSize + root.barGlowRoom" + src[m.end():]
 
-    glowing_block = ("    // The surface is transparent; this shape paints the real background so\n"
-                     "    // it can be rounded. Same color/opacity expression as the old window\n"
-                     "    // color, radius from setBarCorners() (0 keeps the plain rectangle). The\n"
-                     "    // content lives in barSurfaceHost, pinned to the docked edge, so it\n"
-                     "    // stays barSize tall while the window grows the barGlowRoom reserve on\n"
-                     "    // the desktop-facing side for the glow bloom.\n"
-                     "    WlrLayershell.namespace: \"omarchy-bar\"\n"
-                     "    WlrLayershell.layer: WlrLayer.Top\n"
-                     "\n"
-                     "    Item {\n"
-                     "      id: barSurfaceHost\n"
-                     "      x: root.vertical ? (root.position === \"right\" ? parent.width - root.barSize : 0) : 0\n"
-                     "      y: root.vertical ? 0 : (root.position === \"bottom\" ? parent.height - root.barSize : 0)\n"
-                     "      width: root.vertical ? root.barSize : parent.width\n"
-                     "      height: root.vertical ? parent.height : root.barSize\n"
-                     "\n"
-                     "      Rectangle {\n"
-                     "        id: barBackgroundSurface\n"
-                     "        anchors.fill: parent\n"
-                     "        color: root.transparent ? \"transparent\" : Util.alpha(root.background, root.backgroundOpacity)\n"
-                     "        radius: root.barCornerRadius\n"
-                     "      }\n"
-                     "\n"
-                     "      // Border glow. The same plain translucent ring strokes the dock paints\n"
-                     "      // behind its card, drawn behind this surface so the light reads as\n"
-                     "      // coming off the bar's outline. barGlowFocus nudges the stack one\n"
-                     "      // pixel toward the emphasized edge; the docked-edge side clips at the\n"
-                     "      // screen edge like the dock card's own glow does.\n"
-                     "      Item {\n"
-                     "        id: barGlow\n"
-                     "        anchors.fill: parent\n"
-                     "        z: -1\n"
-                     "        visible: root.barGlowEnabled\n"
-                     "        Repeater {\n"
-                     "          model: [0, 1, 2, 3]\n"
-                     "          Rectangle {\n"
-                     "            required property int index\n"
-                     "            readonly property int step: modelData\n"
-                     "            x: -1 - step + root.barGlowShiftX\n"
-                     "            y: -1 - step + root.barGlowShiftY\n"
-                     "            width: parent.width + (2 + step * 2)\n"
-                     "            height: parent.height + (2 + step * 2)\n"
-                     "            radius: Math.max(0, root.barCornerRadius + 1 + step)\n"
-                     "            color: \"transparent\"\n"
-                     "            border.width: 2\n"
-                     "            border.color: Util.alpha(root.barGlowColor,\n"
-                     "              root.barGlowAmount * [0.50, 0.32, 0.18, 0.10][step])\n"
-                     "          }\n"
-                     "        }\n"
-                     "      }\n"
-                     "\n"
-                     "      Loader {\n"
-                     "        anchors.fill: parent\n"
-                     "        sourceComponent: root.vertical ? verticalBar : horizontalBar\n"
-                     "\n"
-                     "        // A child of the loader, not a sibling of the sections: an ancestor stays\n"
-                     "        // hovered while the pointer is over a widget, where a sibling would lose\n"
-                     "        // hover to the section the pointer entered.\n"
-                     "        HoverHandler {\n"
-                     "          onHoveredChanged: root.setBarHovered(hovered)\n"
-                     "          // Unplugging a monitor destroys its bar without a leave event, which\n"
-                     "          // would strand this surface's tally and hold the peek open for good.\n"
-                     "          Component.onDestruction: if (hovered) root.setBarHovered(false)\n"
-                     "        }\n"
-                     "      }\n"
-                     "    }\n")
-    src = src.replace(surface_block, glowing_block, 1)
+    # Use regex to find the surface_block (it may have been modified by opacity/corners patches)
+    # The surface_block is the barBackgroundSurface rectangle + WlrLayershell + Loader block
+    surface_block_pattern = (r'^\s*// The surface is transparent; this shape paints the real background so\n'
+                             r'^\s*// it can be rounded\. Same color/opacity expression as the old window\n'
+                             r'^\s*// color, radius from setBarCorners\(\) \(0 keeps the plain rectangle\)\.\n'
+                             r'^\s*Rectangle \{\n'
+                             r'^\s*id: barBackgroundSurface\n'
+                             r'^\s*anchors\.fill: parent\n'
+                             r'^\s*color: root\.transparent \? "transparent" : Util\.alpha\(root\.background, root\.backgroundOpacity\)\n'
+                             r'^\s*radius: root\.barCornerRadius\n'
+                             r'^\s*\}\n'
+                             r'\n'
+                             r'^\s*WlrLayershell\.namespace: "omarchy-bar"\n'
+                             r'^\s*WlrLayershell\.layer: WlrLayer\.Top\n'
+                             r'\n'
+                             r'^\s*Loader \{\n'
+                             r'^\s*anchors\.fill: parent\n'
+                             r'^\s*sourceComponent: root\.vertical \? verticalBar : horizontalBar\n'
+                             r'\n'
+                             r'^\s*// A child of the loader, not a sibling of the sections: an ancestor stays\n'
+                             r'^\s*// hovered while the pointer is over a widget, where a sibling would lose\n'
+                             r'^\s*// hover to the section the pointer entered\.\n'
+                             r'^\s*HoverHandler \{\n'
+                             r'^\s*onHoveredChanged: root\.setBarHovered\(hovered\)\n'
+                             r'^\s*// Unplugging a monitor destroys its bar without a leave event, which\n'
+                             r'^\s*// would strand this surface\'s tally and hold the peek open for good\.\n'
+                             r'^\s*Component\.onDestruction: if \(hovered\) root\.setBarHovered\(false\)\n'
+                             r'^\s*\}\n'
+                             r'^\s*\}\n')
+    m = re.search(surface_block_pattern, src, re.MULTILINE)
+    if not m:
+        print("patch_bar: bar-surface+loader block not found — this bar version is not supported", file=sys.stderr)
+        sys.exit(1)
+    src = src[:m.start()] + glowing_block + src[m.end():]
 
 if src.count("{") != src.count("}"):
     print("patch_bar: brace balance broken after edit", file=sys.stderr)
@@ -1385,7 +1302,9 @@ Settable keys (printed from the same list `set` validates against, so the
 two cannot drift). "null" removes one, and the plugin's built-in default
 applies again:
 EOF
-      printf '  %s\n' "${KNOWN_KEYS[@]}"
+      for k in "${KNOWN_KEYS[@]}"; do
+        printf '  %-20s %s\n' "$k" "${KEY_DESC[$k]:-}"
+      done
       cat <<'EOF'
 
 Items are edited with add / set-item / pin / unpin / move, not `set`.

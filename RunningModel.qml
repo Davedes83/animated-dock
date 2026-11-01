@@ -31,9 +31,13 @@ Item {
   required property var pinnedItems
 
   // Apps set their appId a beat after the window maps, and Quickshell's
-  // values list doesn't re-notify for it. Bumped by the per-toplevel
-  // watchers below so the group binding re-evaluates.
+  // values list doesn't re-notify for it. Bumped by the toplevel manager
+  // watcher below so the group binding re-evaluates.
   property int rev: 0
+
+  // Cache for extras to avoid full rebuild on every rev bump when groups
+  // haven't actually changed. Stores { groupsKeys: [...], extras: [...] }
+  property var extrasCache: { groupsKeys: [], extras: [] }
 
   // Most-recently-used order, newest first, as toplevel references. Pruned
   // against the live toplevel set so closed windows' references don't
@@ -59,6 +63,12 @@ Item {
       model.mru = next
       model.pruneMru()
     }
+    // When the toplevel set changes (new window maps, window closes), bump
+    // rev to refresh groups. Use Qt.callLater so the Instantiator below has
+    // time to create Connections for new toplevels before we read appIds.
+    function onToplevelsChanged() {
+      Qt.callLater(function() { model.rev++ })
+    }
   }
 
   // Windows can close without ever being active again, so also prune on a
@@ -70,6 +80,9 @@ Item {
     onTriggered: model.pruneMru()
   }
 
+  // Per-toplevel watcher for appId changes (e.g., app sets WM_CLASS after map).
+  // This runs after onToplevelsChanged has already bumped rev, so it's a
+  // no-op if the appId was already set, but catches late appId assignments.
   Instantiator {
     model: ToplevelManager.toplevels.values || []
     delegate: Connections {
@@ -176,12 +189,31 @@ Item {
   // focus instead would be MRU, but focus changes constantly, so the section
   // would reshuffle under the pointer every time the user alt-tabbed. MRU
   // still decides the order *within* an app, in windowsFor() below.
+  //
+  // Cached to avoid full rebuild on every rev bump. Only rebuilds when
+  // groups keys actually change (new appId appears/disappears).
   readonly property var extras: {
     var claimedKeys = []
     var list = Array.isArray(pinnedItems) ? pinnedItems : []
     for (var i = 0; i < list.length; i++)
       claimedKeys = claimedKeys.concat(matchKeys(list[i]))
 
+    // Get current groups keys
+    var currentGroupsKeys = []
+    for (var gid in groups) currentGroupsKeys.push(gid)
+    currentGroupsKeys.sort()
+
+    // Check if cache is valid
+    var cache = model.extrasCache
+    var cacheValid = cache && cache.groupsKeys &&
+      cache.groupsKeys.length === currentGroupsKeys.length &&
+      cache.groupsKeys.every(function(k, i) { return k === currentGroupsKeys[i] })
+
+    if (cacheValid) {
+      return cache.extras
+    }
+
+    // Rebuild extras
     var out = []
     for (var gid in groups) {
       var claimed = false
@@ -200,6 +232,9 @@ Item {
       }
       out.push(item)
     }
+
+    // Update cache
+    model.extrasCache = { groupsKeys: currentGroupsKeys, extras: out }
     return out
   }
 }

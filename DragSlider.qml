@@ -48,16 +48,31 @@ Item {
   // later, so the dragged value is held instead — with a watchdog underneath
   // it: if the write never comes back (the configurator died), fall back to
   // what the config actually holds rather than leaving the knob lying.
+  //
+  // Instead of a fixed timer, we track whether we're waiting for the config
+  // to reload. When `value` changes (config reload), we clear the wait flag.
+  // A single-shot timer only fires if the config never comes back.
+  property bool waitingForConfig: false
+
   Timer {
     id: settle
-    interval: 1500
-    onTriggered: if (!root.dragging && root.liveValue !== root.value) root.liveValue = root.value
+    interval: 5000
+    repeat: false
+    onTriggered: {
+      if (root.waitingForConfig && !root.dragging && root.liveValue !== root.value) {
+        root.liveValue = root.value
+      }
+      root.waitingForConfig = false
+    }
   }
 
   onValueChanged: {
     if (dragging) return
     liveValue = value
-    settle.stop()
+    if (waitingForConfig) {
+      waitingForConfig = false
+      settle.stop()
+    }
   }
 
   signal moved(real value)
@@ -143,9 +158,10 @@ Item {
       // Snap to the caller's detents. `step` is honoured here rather than
       // left to the caller: the dock's sliders declare steps of 2 px / 5%
       // and were quietly producing values like 39 px and 47%.
+      // Use floor(x + 0.5) instead of Math.round to avoid banker's rounding bias.
       if (root.step > 0 && root.step < root.range)
-        raw = root.minimum + Math.round((raw - root.minimum) / root.step) * root.step
-      if (root.integer) raw = Math.round(raw)
+        raw = root.minimum + Math.floor((raw - root.minimum) / root.step + 0.5) * root.step
+      if (root.integer) raw = Math.floor(raw + 0.5)
       return Math.max(root.minimum, Math.min(root.maximum, raw))
     }
 
@@ -167,6 +183,7 @@ Item {
       root.dragging = false
       var v = root.liveValue
       root.released(v)
+      root.waitingForConfig = true
       settle.start()
     }
   }

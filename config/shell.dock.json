@@ -13,6 +13,7 @@
   "tiles": false,
   "tileOpacity": 0.15,
   "border": true,
+  "blur": true,
   "matchBarOpacity": false,
   "matchBarCorners": false,
   "matchBarGlow": false,

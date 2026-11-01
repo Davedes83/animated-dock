@@ -337,6 +337,16 @@ PopupWindow {
         }
       }
 
+      DockToggle {
+        width: settings.contentWidth
+        label: "Background blur"
+        description: "Frosted glass effect behind the dock (requires Hyprland blur)."
+        stored: settings.dock.flag("blur", true)
+        foreground: Color.popups.text
+        accent: Color.accent
+        onRequestWrite: function(v) { settings.dock.applySetting("blur", String(v)) }
+      }
+
       Column {
         width: settings.contentWidth
         spacing: Style.spacing.sm
