@@ -1775,6 +1775,10 @@ Item {
 
             Rectangle {
               required property int index
+              // Declaring `index` required stops QML injecting the implicit
+              // delegate context, so modelData must be declared too — otherwise
+              // it resolves to the enclosing screen delegate's modelData.
+              required property int modelData
               readonly property int step: modelData
               x: -1 - step + root.glowShiftX
               y: -1 - step + root.glowShiftY

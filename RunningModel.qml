@@ -37,7 +37,7 @@ Item {
 
   // Cache for extras to avoid full rebuild on every rev bump when groups
   // haven't actually changed. Stores { groupsKeys: [...], extras: [...] }
-  property var extrasCache: { groupsKeys: [], extras: [] }
+  property var extrasCache: ({ groupsKeys: [], extras: [] })
 
   // Most-recently-used order, newest first, as toplevel references. Pruned
   // against the live toplevel set so closed windows' references don't
@@ -63,10 +63,16 @@ Item {
       model.mru = next
       model.pruneMru()
     }
-    // When the toplevel set changes (new window maps, window closes), bump
-    // rev to refresh groups. Use Qt.callLater so the Instantiator below has
-    // time to create Connections for new toplevels before we read appIds.
-    function onToplevelsChanged() {
+  }
+
+  // When the toplevel set changes (new window maps, window closes), bump
+  // rev to refresh groups. ToplevelManager itself has no such signal — its
+  // constant `toplevels` ObjectModel emits valuesChanged. Use Qt.callLater so
+  // the Instantiator below has time to create Connections for new toplevels
+  // before we read appIds.
+  Connections {
+    target: ToplevelManager.toplevels
+    function onValuesChanged() {
       Qt.callLater(function() { model.rev++ })
     }
   }
@@ -81,8 +87,8 @@ Item {
   }
 
   // Per-toplevel watcher for appId changes (e.g., app sets WM_CLASS after map).
-  // This runs after onToplevelsChanged has already bumped rev, so it's a
-  // no-op if the appId was already set, but catches late appId assignments.
+  // This runs after valuesChanged has already bumped rev, so it's a no-op if
+  // the appId was already set, but catches late appId assignments.
   Instantiator {
     model: ToplevelManager.toplevels.values || []
     delegate: Connections {
@@ -233,8 +239,11 @@ Item {
       out.push(item)
     }
 
-    // Update cache
-    model.extrasCache = { groupsKeys: currentGroupsKeys, extras: out }
+    // Update the cache after this binding finishes: writing it inline would
+    // re-enter the binding that reads it and trip a binding-loop warning.
+    Qt.callLater(function() {
+      model.extrasCache = { groupsKeys: currentGroupsKeys, extras: out }
+    })
     return out
   }
 }
