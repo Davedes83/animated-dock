@@ -1400,7 +1400,7 @@ Item {
   function activate(item, entry) {
     if (!Util.isPlainObject(item)) return
 
-    if (item.showApps === true) { Util.execDetached("omarchy-menu"); return }
+    if (item.showApps === true) { Util.execDetached("omarchy menu summon apps"); return }
     if (item.trash === true) { Util.execDetached("xdg-open trash:///"); return }
 
     var wins = root.windowsFor(item)
@@ -1418,7 +1418,7 @@ Item {
 
   function launchNew(item, entry) {
     if (!Util.isPlainObject(item)) return
-    if (item.showApps === true) { Util.execDetached("omarchy-menu"); return }
+    if (item.showApps === true) { Util.execDetached("omarchy menu summon apps"); return }
     if (item.trash === true) { Util.execDetached("xdg-open trash:///"); return }
     if (item.exec) { Util.execDetached(String(item.exec)); return }
     if (entry && root.shell && root.shell.appLibrary) {

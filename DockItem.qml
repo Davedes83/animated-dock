@@ -302,10 +302,17 @@ Item {
   // Middle-click, and Ctrl+click for the trackpad crowd (the dock layer
   // surface takes no keyboard focus, so Ctrl arrives unpressed; both are
   // here for whichever input lands). Both open a new window of the app.
+  // Exception: middle-click on the Apps icon opens the Omarchy menu.
   TapHandler {
     enabled: !cell.isRule
     acceptedButtons: Qt.MiddleButton
-    onTapped: cell.dock.launchNewWindow(cell.modelData, cell.entry)
+    onTapped: {
+      if (cell.isApps) {
+        Util.execDetached("omarchy-menu")
+      } else {
+        cell.dock.launchNewWindow(cell.modelData, cell.entry)
+      }
+    }
   }
 
   // Scroll over an icon cycles its windows (dash2dock's scroll-ccycle).
