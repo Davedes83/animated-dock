@@ -110,6 +110,7 @@ Settings on the plugin entry:
 | `glowAmount` | Glow strength, 0–1 (default 0.5) |
 | `glowFocus` | How the halo is weighted: `"full"` (default) all round, `"bottom"` pushed toward the docked edge, or `"top"` the other way |
 | `autohide` | `false` keeps the dock always visible (default true) |
+| `primaryOnly` | Show the dock and its edge hotspot only on Qt's primary/default monitor, even when another monitor is focused (default `false`) |
 | `dodge` | Intelli-hide from overlapping / fullscreen windows (default true) |
 | `pressure` | Reveal delay collapses to zero on the edge hotspot (default true) |
 | `revealDelay`, `hideDelay` | Hover-in and hover-out delays, ms |
@@ -144,7 +145,7 @@ to scan as the dock grows:
   position, full length, and the border toggle beside its opacity slider
 - **Glow** — the border-glow toggle together with the strength slider and
   focus picker that it reveals
-- **Behaviour** — auto-hide and icon-name tooltips
+- **Behaviour** — auto-hide, primary-monitor-only mode, and icon-name tooltips
 - **Taskbar sync** — the "Sync taskbar opacity / corners / glow" toggles
 - **Support** — the Ko-fi link
 
