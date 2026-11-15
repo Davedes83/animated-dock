@@ -636,6 +636,112 @@ fn_anchor_pattern = r'^\s*function\s+restoreForegroundAnimation\(\)\s*$'
 color_anchor_pattern = r'^\s*color\s*:\s*root\.transparent\s*\?\s*"transparent"\s*:\s*root\.background\s*$'
 color_next_pattern = r'^\s*surfaceFormat\.opaque\s*:\s*false\s*$'
 
+# QML snippets to inject — defined up front so every feature block can use them.
+prop = '''
+    property real backgroundOpacity: 1.0
+
+    function setBackgroundOpacity(opacity) {
+        root.backgroundOpacity = opacity
+    }
+'''
+
+fn = '''
+    function restoreForegroundAnimation() {
+        // No-op: the foreground is the bar surface itself, which is now painted
+        // by barBackgroundSurface. Kept for compatibility with code that calls it.
+    }
+'''
+
+corner_prop = '''
+    property string barCornerShape: "rounded"
+    property real barCornerRadius: 0
+
+    function setBarCorners(shape, radius) {
+        root.barCornerShape = shape
+        root.barCornerRadius = radius === undefined ? 0 : radius
+    }
+'''
+
+glow_prop = '''
+    property bool barGlow: false
+    property real barGlowAmount: 0.5
+    property string barGlowFocus: "full"
+    property real barGlowRoom: 0
+
+    function setBarGlow(glow, amount, focus) {
+        root.barGlow = glow
+        root.barGlowAmount = amount
+        root.barGlowFocus = focus
+        root.barGlowRoom = glow ? 10 : 0
+    }
+'''
+
+glowing_block = '''    // The surface is transparent; this shape paints the real background so
+    // it can be rounded. Same color/opacity expression as the old window
+    // color, radius from setBarCorners() (0 keeps the plain rectangle).
+    Rectangle {
+      id: barBackgroundSurface
+      anchors.fill: parent
+      color: root.transparent ? "transparent" : Util.alpha(root.background, root.backgroundOpacity)
+      radius: root.barCornerRadius
+    }
+
+    // Glow halo — blooms past the barBackgroundSurface on the desktop-facing side.
+    // Drawn as a series of concentric rectangles with fading opacity.
+    Item {
+      id: barGlowHalo
+      anchors.fill: parent
+      visible: root.barGlow && !root.transparent
+      z: -1
+
+      property real glowOpacity: root.barGlowAmount * 0.6
+      property real glowSpread: root.barGlowRoom
+
+      // The glow extends on the side opposite the docked edge.
+      // bottom dock -> glow up; top dock -> glow down; left dock -> glow right; right dock -> glow left.
+      property real glowShiftX: root.vertical ? (root.edge === "right" ? -1 : 1) * root.barGlowFocusShift : 0
+      property real glowShiftY: root.vertical ? 0 : (root.edge === "bottom" ? -1 : 1) * root.barGlowFocusShift
+
+      Repeater {
+        model: 4
+        Rectangle {
+          anchors.centerIn: parent
+          width: parent.width + (index + 1) * root.barGlowRoom * 2
+          height: parent.height + (index + 1) * root.barGlowRoom * 2
+          radius: root.barCornerRadius + (index + 1) * root.barGlowRoom
+          color: "transparent"
+          border.color: root.barGlowColor
+          border.width: root.barGlowRoom / 2
+          opacity: root.glowOpacity * [0.50, 0.32, 0.18, 0.10][index]
+          transform: [
+            Translate {
+              x: root.glowShiftX * (index + 1) * root.barGlowRoom
+              y: root.glowShiftY * (index + 1) * root.barGlowRoom
+            }
+          ]
+        }
+      }
+    }
+
+    WlrLayershell.namespace: "omarchy-bar"
+    WlrLayershell.layer: WlrLayer.Top
+
+    Loader {
+      anchors.fill: parent
+      sourceComponent: root.vertical ? verticalBar : horizontalBar
+
+      // A child of the loader, not a sibling of the sections: an ancestor stays
+      // hovered while the pointer is over a widget, where a sibling would lose
+      // hover to the section the pointer entered.
+      HoverHandler {
+        onHoveredChanged: root.setBarHovered(hovered)
+        // Unplugging a monitor destroys its bar without a leave event, which
+        // would strand this surface's tally and hold the peek open for good.
+        Component.onDestruction: if (hovered) root.setBarHovered(false)
+      }
+    }
+'''
+
 
 if not (wants_opacity or wants_corners or wants_glow):
     sys.exit(0)  # fully supported already

@@ -506,7 +506,25 @@ Item {
   // tick) that changes the set mid-run bumps the generation, and the
   // completion handler drops any run whose snapshot is no longer current
   // instead of mapping stale stdout onto a different item.
+  //
+  // Trust boundary: `when` commands come from user config (shell.json).
+  // We sanitize by rejecting commands containing shell metacharacters that
+  // could escape the `if { ... ; }` wrapper, and we enforce a hard timeout.
   property int conditionGeneration: 0
+  readonly property int conditionTimeoutMs: 3000
+
+  function sanitizeCondition(cmd) {
+    // Reject commands that could break out of the if { ... ; } wrapper.
+    // Allowed: alphanum, underscore, dash, dot, slash, colon, equals, space.
+    // This is intentionally restrictive — conditions are meant to be simple
+    // checks like `test -f /path` or `systemctl is-active --quiet foo`.
+    var s = String(cmd || "").trim()
+    if (s === "") return ""
+    // Disallow: ; & | $ ` ( ) < > { } [ ] * ? ~ # % ^ \ newline
+    if (/[;&|$`()<>[\]{}*?~#%^\\]/.test(s)) return ""
+    if (/\n|\r/.test(s)) return ""
+    return s
+  }
 
   function evaluateConditions() {
     if (conditionIndices.length === 0) return
@@ -517,11 +535,18 @@ Item {
     conditionProc.pending = []
     var lines = []
     for (var i = 0; i < idx.length; i++) {
-      var cmd = String(items[idx[i]].when)
-      lines.push("if { " + cmd + " ; } >/dev/null 2>&1; then echo 1; else echo 0; fi")
+      var cmd = sanitizeCondition(items[idx[i]].when)
+      if (cmd === "") {
+        // Unsafe or empty condition — treat as false (item hidden).
+        lines.push("echo 0")
+      } else {
+        lines.push("if { " + cmd + " ; } >/dev/null 2>&1; then echo 1; else echo 0; fi")
+      }
     }
     conditionProc.command = ["bash", "-lc", lines.join("\n")]
     conditionProc.running = true
+    // Hard backstop: kill the process if it exceeds the timeout.
+    conditionKillTimer.restart()
   }
 
   onConditionIndicesChanged: evaluateConditions()
@@ -540,8 +565,15 @@ Item {
       }
     }
 
+    stderr: SplitParser {
+      onRead: function(line) {
+        console.warn("animated.dock: condition stderr:", String(line).trim())
+      }
+    }
+
     onRunningChanged: {
       if (running) return
+      conditionKillTimer.stop()
       // A newer evaluateConditions() superseded this run; its stdout maps to
       // a previous item set and must not touch the current results.
       if (conditionProc.generation !== root.conditionGeneration) return
@@ -554,6 +586,18 @@ Item {
           next[idx[i]] = resolved
           root.conditionResults = next
         }
+      }
+    }
+  }
+
+  Timer {
+    id: conditionKillTimer
+    interval: root.conditionTimeoutMs
+    repeat: false
+    onTriggered: {
+      if (conditionProc.running) {
+        console.warn("animated.dock: condition evaluation timed out, killing process")
+        conditionProc.running = false
       }
     }
   }
