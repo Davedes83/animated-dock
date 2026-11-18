@@ -755,7 +755,10 @@ stock_bar_dir() {
   local dir
   dir=$(omarchy-plugin-catalog 2>/dev/null |
     jq -r '.[] | select(.id == "omarchy.bar") | .sourceDir' 2>/dev/null)
-  [[ -n $dir && -d $dir ]] && { echo "$dir"; return 0; }
+  [[ -n $dir && -d $dir ]] && {
+    echo "$dir"
+    return 0
+  }
   echo "/usr/share/omarchy/shell/plugins/bar"
 }
 
@@ -771,13 +774,22 @@ clone_is_omarchy_bar() {
 refresh_clone() {
   local dir=$1 stock=$2 manifest="$1/manifest.json" tmp
   tmp=$(mktemp) || return 1
-  cp -p -- "$manifest" "$tmp" 2>/dev/null || { rm -f -- "$tmp"; return 1; }
+  cp -p -- "$manifest" "$tmp" 2>/dev/null || {
+    rm -f -- "$tmp"
+    return 1
+  }
   if [[ -f $dir/Bar.qml ]]; then
     cp -p -- "$dir/Bar.qml" \
       "$dir/Bar.qml.pre-animated-dock-refresh.$(date +%Y%m%d-%H%M%S)" || true
   fi
-  cp -aL -- "$stock/." "$dir/" || { rm -f -- "$tmp"; return 1; }
-  cp -p -- "$tmp" "$manifest" || { rm -f -- "$tmp"; return 1; }
+  cp -aL -- "$stock/." "$dir/" || {
+    rm -f -- "$tmp"
+    return 1
+  }
+  cp -p -- "$tmp" "$manifest" || {
+    rm -f -- "$tmp"
+    return 1
+  }
   rm -f -- "$tmp"
   rm -f -- "$dir/.animated-dock-source"
   return 0
@@ -812,19 +824,19 @@ ensure_bar_supported() {
   # changed. Without this the clone freezes at its creation date and slowly
   # loses widgets and APIs as Omarchy updates the bar.
   if clone_is_omarchy_bar "$dir" && [[ -n $hash ]] &&
-     [[ "$(cat "$dir/.animated-dock-source" 2>/dev/null)" != "$hash" ]]; then
+    [[ "$(cat "$dir/.animated-dock-source" 2>/dev/null)" != "$hash" ]]; then
     refresh_clone "$dir" "$stock" ||
       die "could not refresh the taskbar clone from $stock"
     BAR_INSTALLED=1
   fi
 
   if grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" &&
-     grep -q 'function setBarCorners' "$dir/Bar.qml" &&
-     grep -q 'function setBarGlow' "$dir/Bar.qml"; then
+    grep -q 'function setBarCorners' "$dir/Bar.qml" &&
+    grep -q 'function setBarGlow' "$dir/Bar.qml"; then
     # Already patched. Record the source hash so the next run can tell whether
     # the stock bar moved under us.
     if clone_is_omarchy_bar "$dir" && [[ -n $hash ]]; then
-      printf '%s\n' "$hash" > "$dir/.animated-dock-source"
+      printf '%s\n' "$hash" >"$dir/.animated-dock-source"
     fi
   else
     if ! patch_bar "$dir/Bar.qml"; then
@@ -838,7 +850,7 @@ ensure_bar_supported() {
     fi
     BAR_INSTALLED=1
     if clone_is_omarchy_bar "$dir" && [[ -n $hash ]]; then
-      printf '%s\n' "$hash" > "$dir/.animated-dock-source"
+      printf '%s\n' "$hash" >"$dir/.animated-dock-source"
     fi
   fi
 
