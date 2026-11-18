@@ -767,30 +767,65 @@ clone_is_omarchy_bar() {
   jq -e '.omarchy.clonedFrom == "omarchy.bar"' "$1/manifest.json" >/dev/null 2>&1
 }
 
-# Re-copy the current stock bar over the clone, preserving the clone's own
-# manifest (id/name/clonedFrom) and backing up the old Bar.qml. This is what
-# stops the clone from freezing at whatever bar version existed when the user
-# first enabled a sync setting.
+# Refresh the clone's bar implementation from the current stock bar. Only
+# Bar.qml and BarModel.js are touched — widgets/, indicators/, the manifest and
+# anything else the user may have customised are left alone. The new files are
+# staged and patched beside the clone, then moved into place, so a failure
+# never leaves a half-written clone; the old files are backed up first. This is
+# what stops the clone from freezing at whatever bar version existed when the
+# user first enabled a sync setting.
 refresh_clone() {
-  local dir=$1 stock=$2 manifest="$1/manifest.json" tmp
-  tmp=$(mktemp) || return 1
-  cp -p -- "$manifest" "$tmp" 2>/dev/null || {
-    rm -f -- "$tmp"
+  local dir=$1 stock=$2 stage ts
+  stage=$(mktemp -d "$dir/.refresh.XXXXXX") || return 1
+
+  cp -p -- "$stock/Bar.qml" "$stage/Bar.qml" || {
+    rm -rf -- "$stage"
     return 1
   }
-  if [[ -f $dir/Bar.qml ]]; then
-    cp -p -- "$dir/Bar.qml" \
-      "$dir/Bar.qml.pre-animated-dock-refresh.$(date +%Y%m%d-%H%M%S)" || true
+  if [[ -f $stock/BarModel.js ]]; then
+    cp -p -- "$stock/BarModel.js" "$stage/BarModel.js" || {
+      rm -rf -- "$stage"
+      return 1
+    }
   fi
-  cp -aL -- "$stock/." "$dir/" || {
-    rm -f -- "$tmp"
+
+  patch_bar "$stage/Bar.qml" || {
+    rm -rf -- "$stage"
     return 1
   }
-  cp -p -- "$tmp" "$manifest" || {
-    rm -f -- "$tmp"
+  rm -f -- "$stage/Bar.qml.bak"
+
+  ts=$(date +%Y%m%d-%H%M%S)
+  if [[ -f $dir/Bar.qml ]]; then
+    cp -p -- "$dir/Bar.qml" "$dir/Bar.qml.pre-animated-dock-refresh.$ts" || {
+      rm -rf -- "$stage"
+      return 1
+    }
+  fi
+  if [[ -f $dir/BarModel.js ]]; then
+    cp -p -- "$dir/BarModel.js" "$dir/BarModel.js.pre-animated-dock-refresh.$ts" || {
+      rm -rf -- "$stage"
+      return 1
+    }
+  fi
+
+  # Both renames stay on the clone's own filesystem, so each is atomic. If the
+  # second one fails, put the first back from the backup just taken.
+  mv -f -- "$stage/Bar.qml" "$dir/Bar.qml" || {
+    rm -rf -- "$stage"
     return 1
   }
-  rm -f -- "$tmp"
+  if [[ -f $stage/BarModel.js ]]; then
+    mv -f -- "$stage/BarModel.js" "$dir/BarModel.js" || {
+      [[ -f $dir/Bar.qml.pre-animated-dock-refresh.$ts ]] &&
+        mv -f -- "$dir/Bar.qml.pre-animated-dock-refresh.$ts" "$dir/Bar.qml"
+      rm -rf -- "$stage"
+      return 1
+    }
+  fi
+
+  rm -rf -- "$stage"
+  sha256sum -- "$dir/Bar.qml" | awk '{print $1}' >"$dir/.animated-dock-generated"
   rm -f -- "$dir/.animated-dock-source"
   return 0
 }
@@ -822,12 +857,20 @@ ensure_bar_supported() {
 
   # Refresh a dock-created clone whenever the stock bar it was copied from has
   # changed. Without this the clone freezes at its creation date and slowly
-  # loses widgets and APIs as Omarchy updates the bar.
+  # loses widgets and APIs as Omarchy updates the bar. A clone whose Bar.qml
+  # no longer matches the generated-hash marker has been edited by hand, so it
+  # is left alone rather than overwritten.
   if clone_is_omarchy_bar "$dir" && [[ -n $hash ]] &&
     [[ "$(cat "$dir/.animated-dock-source" 2>/dev/null)" != "$hash" ]]; then
-    refresh_clone "$dir" "$stock" ||
-      die "could not refresh the taskbar clone from $stock"
-    BAR_INSTALLED=1
+    if [[ -f $dir/.animated-dock-generated && -f $dir/Bar.qml ]] &&
+      [[ "$(sha256sum -- "$dir/Bar.qml" | awk '{print $1}')" != "$(cat "$dir/.animated-dock-generated")" ]]; then
+      echo "animated-dock: taskbar clone '$bar_id' has local Bar.qml changes — not refreshing it." >&2
+      printf '%s\n' "$hash" >"$dir/.animated-dock-source"
+    else
+      refresh_clone "$dir" "$stock" ||
+        die "could not refresh the taskbar clone from $stock"
+      BAR_INSTALLED=1
+    fi
   fi
 
   if grep -q 'function setBackgroundOpacity' "$dir/Bar.qml" &&

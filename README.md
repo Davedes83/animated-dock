@@ -210,12 +210,16 @@ support itself:
    `~/.config/omarchy/plugins/<user>.bar` and switches to it — the same
    `omarchy plugin clone` flow.
 2. It **refreshes that clone from the current stock bar** whenever Omarchy has
-   updated the bar since the clone was made. The refresh copies the current
-   `Bar.qml`, `BarModel.js`, `widgets/` and `indicators/` over the clone,
-   keeps the clone's own `manifest.json`, and backs the old `Bar.qml` up to
-   `Bar.qml.pre-animated-dock-refresh.<timestamp>`. A marker file
-   (`.animated-dock-source`) records the stock bar's hash so an up-to-date
-   clone is left untouched. This is what keeps the clone from freezing at the
+   updated the bar since the clone was made. Only the bar implementation files
+   (`Bar.qml` and `BarModel.js`) are refreshed; `widgets/`, `indicators/`, the
+   manifest and any other local customisation are left alone. The new files are
+   staged and patched beside the clone and then moved into place, so a failure
+   cannot leave a half-written clone; the old files are backed up to
+   `Bar.qml.pre-animated-dock-refresh.<timestamp>` (and the same for
+   `BarModel.js`). A marker file (`.animated-dock-source`) records the stock
+   bar's hash so an up-to-date clone is left untouched, and a
+   `.animated-dock-generated` hash means a hand-edited `Bar.qml` is never
+   overwritten. This is what keeps the clone from freezing at the
    bar version that existed when you first enabled sync — a frozen clone loses
    new bar sections (for example `centerBegin` / `centerEnd`) and the widgets
    placed in them.
