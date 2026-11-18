@@ -208,18 +208,30 @@ support itself:
 
 1. If the active taskbar is the stock one, it clones it into
    `~/.config/omarchy/plugins/<user>.bar` and switches to it — the same
-   `omarchy plugin clone` flow. (An existing clone is reused.)
-2. It adds a `backgroundOpacity` property, a `barCornerRadius`/`setBarCorners()`
+   `omarchy plugin clone` flow.
+2. It **refreshes that clone from the current stock bar** whenever Omarchy has
+   updated the bar since the clone was made. The refresh copies the current
+   `Bar.qml`, `BarModel.js`, `widgets/` and `indicators/` over the clone,
+   keeps the clone's own `manifest.json`, and backs the old `Bar.qml` up to
+   `Bar.qml.pre-animated-dock-refresh.<timestamp>`. A marker file
+   (`.animated-dock-source`) records the stock bar's hash so an up-to-date
+   clone is left untouched. This is what keeps the clone from freezing at the
+   bar version that existed when you first enabled sync — a frozen clone loses
+   new bar sections (for example `centerBegin` / `centerEnd`) and the widgets
+   placed in them.
+3. It adds a `backgroundOpacity` property, a `barCornerRadius`/`setBarCorners()`
    pair, and a `barGlow*`/`setBarGlow()` group to that *user-owned* copy's
    `Bar.qml`, verified against exact anchors, backed up to `Bar.qml.bak`, and
    brace-checked; it refuses to touch an unrecognized bar rather than corrupt
-   it. Each piece is added independently, so a clone that already has some
-   features just backfills the rest.
-3. It restarts the shell once so your cloned taskbar loads the new code with
+   it.
+4. It restarts the shell once so your cloned taskbar loads the new code with
    the setting applied.
 
 That first run needs the one restart; from then on the toggles, sliders, and
-pickers are instant. Nothing in the built-in taskbar is ever edited.
+pickers are instant, unless the stock bar has changed — then the next sync
+change refreshes the clone and restarts once. Nothing in the built-in taskbar
+is ever edited.
+
 You can run `omarchy-dock-config ensure-bar` by hand any time to check or
 re-run the install — it is idempotent and does nothing when support is
 already present.
